@@ -110,17 +110,14 @@ export default function GenerateScreen() {
 
       updateThinking(thinkingId, THINKING_MESSAGES[3]());
 
+      const searchAll = (queries: string[]) =>
+        Promise.all(
+          queries.map((q) => searchTracks(spotifyToken, q, 1).catch(() => []))
+        );
+
       const [familiarResults, discoveryResults] = await Promise.all([
-        Promise.all(
-          (suggestions.familiar ?? []).map((q) =>
-            searchTracks(spotifyToken, q, 1).catch(() => [])
-          )
-        ),
-        Promise.all(
-          (suggestions.discoveries ?? []).map((q) =>
-            searchTracks(spotifyToken, q, 1).catch(() => [])
-          )
-        ),
+        searchAll(suggestions.familiar ?? []),
+        searchAll(suggestions.discoveries ?? []),
       ]);
 
       const familiarTracks = familiarResults.flat().filter(Boolean);

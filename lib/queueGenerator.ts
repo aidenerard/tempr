@@ -1,17 +1,14 @@
-import type { AudioFeatureTargets } from "./gemini";
-import type { VibeProfile } from "./vibes";
+import type { ContextPayload } from "./context/types";
+import { generateQueueSuggestions } from "./gemini";
 import {
-  getTopTracks,
-  getTopArtists,
   getRecommendations,
-  getAudioFeatures,
+  getTopArtists,
+  getTopTracks,
   searchTracks,
   type SpotifyTrack,
-  type AudioFeatures,
 } from "./spotify";
-import { generateQueueSuggestions } from "./gemini";
+import type { VibeProfile } from "./vibes";
 import { getVibePromptDescription } from "./vibes";
-import type { ContextPayload } from "./context/types";
 
 export type GeneratedQueue = {
   tracks: SpotifyTrack[];
@@ -24,18 +21,14 @@ export type GeneratedQueue = {
   generatedAt: number;
 };
 
-function audioFeatureDistance(
-  track: AudioFeatures,
-  target: AudioFeatureTargets
-): number {
-  const diffs = [
-    (track.energy - target.energy) * 2,
-    track.valence - target.valence,
-    track.danceability - target.danceability,
-    (track.acousticness - target.acousticness) * 0.8,
-    (track.tempo - target.tempo) / 100,
-  ];
-  return Math.sqrt(diffs.reduce((s, d) => s + d * d, 0));
+async function searchAll(
+  token: string,
+  queries: string[],
+): Promise<SpotifyTrack[]> {
+  const results = await Promise.all(
+    queries.map((q) => searchTracks(token, q, 1).catch(() => []))
+  );
+  return results.flat().filter(Boolean);
 }
 
 function dedup(tracks: SpotifyTrack[]): SpotifyTrack[] {
@@ -49,7 +42,7 @@ function dedup(tracks: SpotifyTrack[]): SpotifyTrack[] {
 
 function enforceArtistDiversity(
   tracks: SpotifyTrack[],
-  maxPerArtist = 2
+  maxPerArtist = 2,
 ): SpotifyTrack[] {
   const artistCounts = new Map<string, number>();
   return tracks.filter((t) => {
@@ -64,7 +57,7 @@ function enforceArtistDiversity(
 function buildInterleavedQueue(
   familiar: SpotifyTrack[],
   discoveries: SpotifyTrack[],
-  targetMs: number
+  targetMs: number,
 ): { tracks: SpotifyTrack[]; familiarCount: number; discoveryCount: number } {
   const queue: SpotifyTrack[] = [];
   let fi = 0;
@@ -83,7 +76,10 @@ function buildInterleavedQueue(
     familiarCount++;
   }
 
-  while (runningMs < targetMs && (fi < familiar.length || di < discoveries.length)) {
+  while (
+    runningMs < targetMs &&
+    (fi < familiar.length || di < discoveries.length)
+  ) {
     if (fi < familiar.length) {
       queue.push(familiar[fi++]);
       runningMs += queue[queue.length - 1].duration_ms;
@@ -104,7 +100,7 @@ function buildInterleavedQueue(
 export async function generatePromptedQueue(
   spotifyToken: string,
   vibe: VibeProfile,
-  context: ContextPayload
+  context: ContextPayload,
 ): Promise<GeneratedQueue> {
   const promptDescription = getVibePromptDescription(vibe, context);
   const targetMs = vibe.targetDurationMin * 60000;
@@ -117,24 +113,24 @@ export async function generatePromptedQueue(
   const suggestions = await generateQueueSuggestions(
     promptDescription,
     topTracks,
-    topArtists
+    topArtists,
   );
 
-  const [familiarResults, discoveryResults] = await Promise.all([
-    Promise.all(
-      (suggestions.familiar ?? []).map((q) =>
-        searchTracks(spotifyToken, q, 1).catch(() => [])
-      )
-    ),
-    Promise.all(
-      (suggestions.discoveries ?? []).map((q) =>
-        searchTracks(spotifyToken, q, 1).catch(() => [])
-      )
-    ),
+  console.log(
+    `[QueueGen] Searching ${suggestions.familiar?.length ?? 0} familiar + ${suggestions.discoveries?.length ?? 0} discovery tracks`,
+  );
+
+  const [familiarRaw, discoveryRaw] = await Promise.all([
+    searchAll(spotifyToken, suggestions.familiar ?? []),
+    searchAll(spotifyToken, suggestions.discoveries ?? []),
   ]);
 
-  let familiarTracks = dedup(familiarResults.flat().filter(Boolean));
-  let discoveryTracks = dedup(discoveryResults.flat().filter(Boolean));
+  console.log(
+    `[QueueGen] Found ${familiarRaw.length} familiar + ${discoveryRaw.length} discovery`,
+  );
+
+  let familiarTracks = dedup(familiarRaw);
+  let discoveryTracks = dedup(discoveryRaw);
 
   const existingIds = new Set(familiarTracks.map((t) => t.id));
   discoveryTracks = discoveryTracks.filter((t) => !existingIds.has(t.id));
@@ -154,7 +150,8 @@ export async function generatePromptedQueue(
     });
 
     const recTracks = dedup(recs).filter(
-      (t) => !existingIds.has(t.id) && !discoveryTracks.find((d) => d.id === t.id)
+      (t) =>
+        !existingIds.has(t.id) && !discoveryTracks.find((d) => d.id === t.id),
     );
     discoveryTracks.push(...enforceArtistDiversity(recTracks, 1));
   }
@@ -162,7 +159,7 @@ export async function generatePromptedQueue(
   const { tracks, familiarCount, discoveryCount } = buildInterleavedQueue(
     familiarTracks,
     discoveryTracks,
-    targetMs
+    targetMs,
   );
 
   return {
@@ -171,7 +168,7 @@ export async function generatePromptedQueue(
     context,
     reasoning: suggestions.reasoning,
     totalDurationMin: Math.round(
-      tracks.reduce((s, t) => s + t.duration_ms, 0) / 60000
+      tracks.reduce((s, t) => s + t.duration_ms, 0) / 60000,
     ),
     familiarCount,
     discoveryCount,

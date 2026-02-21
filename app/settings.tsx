@@ -1,15 +1,21 @@
-import { StyleSheet, ScrollView, Pressable, Switch, Alert } from "react-native";
 import { Text, View } from "@/components/Themed";
-import { useEffect, useState, useCallback } from "react";
-import { FontAwesome } from "@expo/vector-icons";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
 import { theme } from "@/constants/Colors";
-import { getPromptSettings, savePromptSettings } from "@/lib/settings";
-import { requestNotificationPermission } from "@/lib/notifications";
-import { requestLocationPermission, requestCalendarPermission } from "@/lib/context";
-import type { PromptSettings } from "@/lib/context/types";
 import { trackEvent } from "@/lib/analytics";
+import {
+  requestCalendarPermission,
+  requestLocationPermission,
+} from "@/lib/context";
+import type { PromptSettings } from "@/lib/context/types";
+import { requestNotificationPermission } from "@/lib/notifications";
+import { getPromptSettings, savePromptSettings } from "@/lib/settings";
+import { FontAwesome } from "@expo/vector-icons";
+import * as Calendar from "expo-calendar";
+import * as Location from "expo-location";
+import * as Notifications from "expo-notifications";
+import { useRouter } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
+import { Pressable, ScrollView, StyleSheet, Switch } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type PermissionStatus = {
   notifications: boolean;
@@ -33,21 +39,21 @@ export default function SettingsScreen() {
   }, []);
 
   const checkPermissions = async () => {
-    const { default: Location } = await import("expo-location");
-    const { default: Calendar } = await import("expo-calendar");
-    const Notifications = await import("expo-notifications");
+    try {
+      const [locPerm, calPerm, notifPerm] = await Promise.all([
+        Location.getForegroundPermissionsAsync(),
+        Calendar.getCalendarPermissionsAsync(),
+        Notifications.getPermissionsAsync(),
+      ]);
 
-    const [locPerm, calPerm, notifPerm] = await Promise.all([
-      Location.getForegroundPermissionsAsync(),
-      Calendar.getCalendarPermissionsAsync(),
-      Notifications.getPermissionsAsync(),
-    ]);
-
-    setPermissions({
-      location: locPerm.status === "granted",
-      calendar: calPerm.status === "granted",
-      notifications: notifPerm.status === "granted",
-    });
+      setPermissions({
+        location: locPerm.status === "granted",
+        calendar: calPerm.status === "granted",
+        notifications: notifPerm.status === "granted",
+      });
+    } catch (err) {
+      console.warn("[Settings] permission check failed:", err);
+    }
   };
 
   const updateSetting = useCallback(
@@ -61,7 +67,7 @@ export default function SettingsScreen() {
         properties: { setting: key, value },
       });
     },
-    [settings]
+    [settings],
   );
 
   const requestPermission = useCallback(
@@ -86,7 +92,7 @@ export default function SettingsScreen() {
 
       await checkPermissions();
     },
-    []
+    [],
   );
 
   if (!settings) return null;
@@ -106,8 +112,8 @@ export default function SettingsScreen() {
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.description}>
-          Tempr can detect your context — weather, calendar events, location, and
-          time of day — to proactively build queues that match your moment.
+          Tempr can detect your context — weather, calendar events, location,
+          and time of day — to proactively build queues that match your moment.
         </Text>
 
         <Text style={styles.sectionTitle}>Permissions</Text>
@@ -187,7 +193,7 @@ export default function SettingsScreen() {
                 onPress={() =>
                   updateSetting(
                     "maxPromptsPerDay",
-                    Math.max(1, settings.maxPromptsPerDay - 1)
+                    Math.max(1, settings.maxPromptsPerDay - 1),
                   )
                 }
               >
@@ -201,7 +207,7 @@ export default function SettingsScreen() {
                 onPress={() =>
                   updateSetting(
                     "maxPromptsPerDay",
-                    Math.min(10, settings.maxPromptsPerDay + 1)
+                    Math.min(10, settings.maxPromptsPerDay + 1),
                   )
                 }
               >
@@ -224,11 +230,15 @@ export default function SettingsScreen() {
                 onPress={() =>
                   updateSetting(
                     "quietHoursStart",
-                    (settings.quietHoursStart - 1 + 24) % 24
+                    (settings.quietHoursStart - 1 + 24) % 24,
                   )
                 }
               >
-                <FontAwesome name="chevron-down" size={10} color={theme.textMuted} />
+                <FontAwesome
+                  name="chevron-down"
+                  size={10}
+                  color={theme.textMuted}
+                />
               </Pressable>
               <Text style={styles.hourText}>
                 {formatHour(settings.quietHoursStart)} –{" "}
@@ -239,11 +249,15 @@ export default function SettingsScreen() {
                 onPress={() =>
                   updateSetting(
                     "quietHoursEnd",
-                    (settings.quietHoursEnd + 1) % 24
+                    (settings.quietHoursEnd + 1) % 24,
                   )
                 }
               >
-                <FontAwesome name="chevron-up" size={10} color={theme.textMuted} />
+                <FontAwesome
+                  name="chevron-up"
+                  size={10}
+                  color={theme.textMuted}
+                />
               </Pressable>
             </View>
           </View>
@@ -255,9 +269,9 @@ export default function SettingsScreen() {
             <Text style={styles.privacyTitle}>Your privacy</Text>
             <Text style={styles.privacyText}>
               Context data (weather, calendar type, location category) is
-              processed on-device and never stored on our servers. Calendar event
-              titles are only used to infer event type — full text is never
-              transmitted.
+              processed on-device and never stored on our servers. Calendar
+              event titles are only used to infer event type — full text is
+              never transmitted.
             </Text>
           </View>
         </View>

@@ -1,11 +1,25 @@
 import type { AudioFeatureTargets } from "./gemini";
 
 const SPOTIFY_BASE = "https://api.spotify.com/v1";
+const FETCH_TIMEOUT_MS = 8000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timeout")), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); }
+    );
+  });
+}
 
 async function spotifyFetch(endpoint: string, token: string) {
-  const res = await fetch(`${SPOTIFY_BASE}${endpoint}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await withTimeout(
+    fetch(`${SPOTIFY_BASE}${endpoint}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    }),
+    FETCH_TIMEOUT_MS
+  );
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error?.message || `Spotify API error: ${res.status}`);
