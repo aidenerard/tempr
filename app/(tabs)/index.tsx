@@ -1,132 +1,240 @@
-import { StyleSheet, Pressable, Image } from "react-native";
+import { StyleSheet, ScrollView, Pressable } from "react-native";
 import { Text, View } from "@/components/Themed";
 import { useAuth } from "@/lib/AuthContext";
 import { FontAwesome } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { theme } from "@/constants/Colors";
+
+function getGreeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+const QUICK_VIBES = [
+  { label: "Chill", icon: "moon-o" as const, prompt: "late night chill vibes" },
+  { label: "Workout", icon: "bolt" as const, prompt: "high energy workout" },
+  { label: "Focus", icon: "headphones" as const, prompt: "deep focus study session" },
+  { label: "Drive", icon: "car" as const, prompt: "road trip with friends" },
+  { label: "Sad", icon: "cloud" as const, prompt: "melancholic rainy day" },
+  { label: "Party", icon: "star" as const, prompt: "party mode hype songs" },
+];
 
 export default function HomeScreen() {
-  const { session, signOut } = useAuth();
+  const { session } = useAuth();
+  const router = useRouter();
+  const insets = useSafeAreaInsets();
 
-  const user = session?.user;
-  const spotifyData = user?.user_metadata;
-  const avatarUrl = spotifyData?.avatar_url || spotifyData?.picture;
-  const displayName = spotifyData?.full_name || spotifyData?.name || user?.email;
+  const displayName =
+    session?.user?.user_metadata?.full_name ||
+    session?.user?.user_metadata?.name ||
+    "there";
+  const firstName = displayName.split(" ")[0];
 
   return (
-    <View style={styles.container}>
-      <View style={styles.profileSection}>
-        {avatarUrl ? (
-          <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-        ) : (
-          <View style={styles.avatarPlaceholder}>
-            <FontAwesome name="user" size={32} color="#999" />
-          </View>
-        )}
-        <Text style={styles.greeting}>Hey, {displayName}</Text>
-        <Text style={styles.subtitle}>Your Spotify account is connected</Text>
+    <ScrollView
+      style={[styles.container, { paddingTop: insets.top + 16 }]}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.header}>
+        <Text style={styles.greeting}>{getGreeting()},</Text>
+        <Text style={styles.name}>{firstName}</Text>
       </View>
 
-      <View style={styles.card}>
-        <FontAwesome name="check-circle" size={24} color="#1DB954" />
-        <View style={styles.cardContent}>
-          <Text style={styles.cardTitle}>Spotify Connected</Text>
-          <Text style={styles.cardDescription}>
-            Ready to generate personalized queues
+      <View style={styles.heroCard}>
+        <View style={styles.heroGlow} />
+        <FontAwesome name="fire" size={28} color={theme.primary} />
+        <Text style={styles.heroTitle}>What's your vibe?</Text>
+        <Text style={styles.heroSubtitle}>
+          Tap Generate to create a personalized queue from your mood
+        </Text>
+        <Pressable
+          style={({ pressed }) => [
+            styles.heroButton,
+            pressed && styles.heroButtonPressed,
+          ]}
+          onPress={() => router.push("/(tabs)/generate")}
+        >
+          <FontAwesome name="magic" size={16} color="#fff" />
+          <Text style={styles.heroButtonText}>Generate a Queue</Text>
+        </Pressable>
+      </View>
+
+      <Text style={styles.sectionTitle}>Quick Vibes</Text>
+      <View style={styles.vibeGrid}>
+        {QUICK_VIBES.map((vibe) => (
+          <Pressable
+            key={vibe.label}
+            style={({ pressed }) => [
+              styles.vibeCard,
+              pressed && styles.vibeCardPressed,
+            ]}
+            onPress={() => router.push("/(tabs)/generate")}
+          >
+            <View style={styles.vibeIconWrap}>
+              <FontAwesome name={vibe.icon} size={18} color={theme.primary} />
+            </View>
+            <Text style={styles.vibeLabel}>{vibe.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <View style={styles.tipCard}>
+        <FontAwesome name="lightbulb-o" size={20} color={theme.primaryLight} />
+        <View style={styles.tipContent}>
+          <Text style={styles.tipTitle}>Pro tip</Text>
+          <Text style={styles.tipText}>
+            The more descriptive your prompt, the better. Try "late night coding
+            session with lo-fi beats" instead of just "chill".
           </Text>
         </View>
       </View>
-
-      <View style={styles.spacer} />
-
-      <Pressable
-        style={({ pressed }) => [
-          styles.signOutButton,
-          pressed && styles.signOutPressed,
-        ]}
-        onPress={signOut}
-      >
-        <FontAwesome name="sign-out" size={18} color="#ff4444" />
-        <Text style={styles.signOutText}>Sign Out</Text>
-      </Pressable>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    padding: 24,
-    paddingTop: 60,
+    backgroundColor: theme.bg,
   },
-  profileSection: {
-    alignItems: "center",
-    marginBottom: 40,
+  content: {
+    paddingHorizontal: 20,
+    paddingBottom: 40,
   },
-  avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    marginBottom: 16,
-  },
-  avatarPlaceholder: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: "#2a2a2a",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 16,
-  },
-  greeting: {
-    fontSize: 28,
-    fontWeight: "700",
-  },
-  subtitle: {
-    fontSize: 14,
-    opacity: 0.5,
-    marginTop: 4,
-  },
-  card: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 20,
-    borderRadius: 16,
-    backgroundColor: "rgba(29, 185, 84, 0.1)",
-    borderWidth: 1,
-    borderColor: "rgba(29, 185, 84, 0.2)",
-  },
-  cardContent: {
-    marginLeft: 16,
+  header: {
+    marginBottom: 28,
     backgroundColor: "transparent",
   },
-  cardTitle: {
+  greeting: {
     fontSize: 16,
-    fontWeight: "600",
+    color: theme.textSecondary,
+    fontWeight: "500",
   },
-  cardDescription: {
-    fontSize: 13,
-    opacity: 0.6,
+  name: {
+    fontSize: 32,
+    fontWeight: "800",
+    color: theme.text,
     marginTop: 2,
+    letterSpacing: -0.5,
   },
-  spacer: {
-    flex: 1,
+  heroCard: {
+    backgroundColor: theme.surface,
+    borderRadius: 20,
+    padding: 24,
+    marginBottom: 32,
+    borderWidth: 1,
+    borderColor: theme.primaryBorder,
+    overflow: "hidden",
   },
-  signOutButton: {
+  heroGlow: {
+    position: "absolute",
+    top: -40,
+    right: -40,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: theme.primaryMuted,
+  },
+  heroTitle: {
+    fontSize: 22,
+    fontWeight: "700",
+    color: theme.text,
+    marginTop: 14,
+    letterSpacing: -0.3,
+  },
+  heroSubtitle: {
+    fontSize: 14,
+    color: theme.textSecondary,
+    marginTop: 6,
+    lineHeight: 20,
+  },
+  heroButton: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 14,
+    alignSelf: "flex-start",
+    backgroundColor: theme.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
     borderRadius: 12,
+    marginTop: 18,
+    gap: 8,
+  },
+  heroButtonPressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.97 }],
+  },
+  heroButtonText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: theme.text,
+    marginBottom: 14,
+  },
+  vibeGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 28,
+    backgroundColor: "transparent",
+  },
+  vibeCard: {
+    width: "31%",
+    backgroundColor: theme.surface,
+    borderRadius: 14,
+    padding: 16,
+    alignItems: "center",
     borderWidth: 1,
-    borderColor: "rgba(255, 68, 68, 0.3)",
-    marginBottom: 32,
+    borderColor: theme.surfaceBorder,
   },
-  signOutPressed: {
+  vibeCardPressed: {
     opacity: 0.7,
+    transform: [{ scale: 0.96 }],
   },
-  signOutText: {
-    color: "#ff4444",
-    fontSize: 16,
+  vibeIconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: theme.primaryMuted,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 8,
+  },
+  vibeLabel: {
+    fontSize: 13,
     fontWeight: "600",
-    marginLeft: 8,
+    color: theme.text,
+  },
+  tipCard: {
+    flexDirection: "row",
+    backgroundColor: theme.surface,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+    gap: 14,
+    alignItems: "flex-start",
+  },
+  tipContent: {
+    flex: 1,
+    backgroundColor: "transparent",
+  },
+  tipTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: theme.primaryLight,
+    marginBottom: 4,
+  },
+  tipText: {
+    fontSize: 13,
+    color: theme.textSecondary,
+    lineHeight: 19,
   },
 });

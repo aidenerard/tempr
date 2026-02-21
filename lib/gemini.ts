@@ -15,9 +15,44 @@ export type AudioFeatureTargets = {
 
 export type QueueSuggestion = {
   audioFeatures: AudioFeatureTargets;
-  searches: string[];
+  familiar: string[];
+  discoveries: string[];
   reasoning: string;
 };
+
+function extractJson(raw: string): string | null {
+  // Try extracting from markdown code fences first
+  const fenceMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/i);
+  if (fenceMatch) return fenceMatch[1].trim();
+
+  // Fall back to bracket matching, respecting strings
+  const start = raw.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < raw.length; i++) {
+    const ch = raw[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{") depth++;
+    else if (ch === "}") depth--;
+    if (depth === 0) return raw.slice(start, i + 1);
+  }
+  return null;
+}
 
 export async function generateQueueSuggestions(
   prompt: string,
@@ -34,21 +69,21 @@ export async function generateQueueSuggestions(
     .map((a) => `${a.name} (${(a.genres ?? []).slice(0, 3).join(", ")})`)
     .join(", ");
 
-  const systemPrompt = `You are a music curator AI for an app called Tempr. Given a user's mood/vibe description and their listening history, you must:
+  const systemPrompt = `You are a music curator AI for an app called Tempr. Given a user's mood/vibe description and their listening history, generate a JSON response.
 
-1. Map the mood to quantitative Spotify audio feature targets
-2. Suggest 25-30 specific real songs that match both the mood AND the user's taste
+RESPOND WITH ONLY A JSON OBJECT. No markdown, no code fences, no explanation before or after. Just the raw JSON object.
 
-Return ONLY valid JSON with this exact schema:
+JSON schema:
 {
   "audioFeatures": {
-    "energy": 0.0-1.0,
-    "valence": 0.0-1.0,
-    "danceability": 0.0-1.0,
-    "acousticness": 0.0-1.0,
-    "tempo": 60-200
+    "energy": <number 0.0-1.0>,
+    "valence": <number 0.0-1.0>,
+    "danceability": <number 0.0-1.0>,
+    "acousticness": <number 0.0-1.0>,
+    "tempo": <number 60-200>
   },
-  "searches": ["song title artist name", "song title artist name", ...],
+  "familiar": ["song title - artist name", ...],
+  "discoveries": ["song title - artist name", ...],
   "reasoning": "one sentence explaining the mood mapping and curation logic"
 }
 
@@ -59,29 +94,61 @@ Audio feature guidelines:
 - acousticness: 0=electronic/produced, 1=fully acoustic
 - tempo: BPM (60=slow ballad, 100=mid-tempo, 120=upbeat, 150+=fast)
 
-The "searches" array must contain 25-30 Spotify search queries formatted as "track name artist name". These must be REAL songs that exist on Spotify. Mix well-known tracks with deeper cuts that match the vibe. Heavily consider the user's taste when selecting songs — pick songs similar to what they already listen to but that fit the described mood.`;
+CRITICAL RULES:
+- "familiar": Pick 8-10 songs FROM the user's top tracks that fit the mood. Use EXACT song titles and artist names from their history.
+- "discoveries": Pick 15-20 songs the user has probably NEVER heard. Real songs on Spotify that match the mood. Artists the user does NOT already listen to. Include lesser-known tracks, indie gems, deep cuts. Do NOT repeat any artist from the user's top artists.
+- All songs must be REAL tracks on Spotify.
+- Output ONLY the JSON object, nothing else.`;
 
   const userMessage = `Mood/vibe: "${prompt}"
 
 User's top tracks: ${trackContext}
 User's top artists: ${artistContext}
 
-Generate a queue that matches this vibe.`;
+Generate a queue that matches this vibe. Reply with ONLY the JSON object.`;
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
     contents: userMessage,
     config: {
       systemInstruction: systemPrompt,
+      responseMimeType: "application/json",
+      thinkingConfig: { thinkingBudget: 0 },
       temperature: 0.9,
     },
   });
 
-  const text = response.text ?? "";
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error("Failed to parse Gemini response");
+  const raw = (response.text ?? "").trim();
+
+  console.log("[Gemini] response length:", raw.length);
+  console.log("[Gemini] first 200 chars:", raw.substring(0, 200));
+
+  if (!raw) {
+    throw new Error("Gemini returned an empty response");
   }
 
-  return JSON.parse(jsonMatch[0]) as QueueSuggestion;
+  // Strategy 1: direct parse (works when responseMimeType is respected)
+  try {
+    return JSON.parse(raw) as QueueSuggestion;
+  } catch (e) {
+    console.log("[Gemini] direct parse failed:", (e as Error).message);
+  }
+
+  // Strategy 2: extract JSON from markdown fences or prose
+  const jsonStr = extractJson(raw);
+  if (jsonStr) {
+    try {
+      const sanitized = jsonStr
+        .replace(/,\s*}/g, "}")
+        .replace(/,\s*]/g, "]");
+      return JSON.parse(sanitized) as QueueSuggestion;
+    } catch (e) {
+      console.log("[Gemini] extracted parse failed:", (e as Error).message);
+      console.log("[Gemini] extracted preview:", jsonStr.substring(0, 200));
+    }
+  }
+
+  throw new Error(
+    `Could not parse Gemini response. Starts with: "${raw.substring(0, 100)}"`
+  );
 }

@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
 import { FontAwesome } from "@expo/vector-icons";
+import { theme } from "@/constants/Colors";
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -73,10 +74,16 @@ export default function LoginScreen() {
 
   return (
     <View style={styles.container}>
+      <View style={styles.bgGlow} />
+
       <View style={styles.header}>
-        <FontAwesome name="music" size={64} color="#1DB954" />
+        <View style={styles.iconWrap}>
+          <FontAwesome name="fire" size={40} color={theme.primary} />
+        </View>
         <Text style={styles.title}>Tempr</Text>
-        <Text style={styles.subtitle}>Your AI-powered music queue</Text>
+        <Text style={styles.subtitle}>
+          AI-powered music queues{"\n"}tailored to your vibe
+        </Text>
       </View>
 
       <View style={styles.buttonContainer}>
@@ -94,7 +101,7 @@ export default function LoginScreen() {
             <>
               <FontAwesome
                 name="spotify"
-                size={24}
+                size={22}
                 color="#fff"
                 style={styles.buttonIcon}
               />
@@ -102,11 +109,11 @@ export default function LoginScreen() {
             </>
           )}
         </Pressable>
-      </View>
 
-      <Text style={styles.footer}>
-        Sign in to start generating personalized queues
-      </Text>
+        <Text style={styles.disclaimer}>
+          We only read your listening history to personalize your queues.
+        </Text>
+      </View>
     </View>
   );
 }
@@ -116,26 +123,48 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: 24,
+    padding: 28,
+    backgroundColor: theme.bg,
+  },
+  bgGlow: {
+    position: "absolute",
+    top: "20%",
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    backgroundColor: "rgba(255, 107, 44, 0.06)",
   },
   header: {
     alignItems: "center",
-    marginBottom: 60,
+    marginBottom: 64,
+    backgroundColor: "transparent",
+  },
+  iconWrap: {
+    width: 80,
+    height: 80,
+    borderRadius: 24,
+    backgroundColor: theme.primaryMuted,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 20,
   },
   title: {
-    fontSize: 48,
-    fontWeight: "800",
-    marginTop: 16,
-    letterSpacing: -1,
+    fontSize: 44,
+    fontWeight: "900",
+    color: theme.text,
+    letterSpacing: -1.5,
   },
   subtitle: {
     fontSize: 16,
-    opacity: 0.6,
-    marginTop: 8,
+    color: theme.textSecondary,
+    marginTop: 10,
+    textAlign: "center",
+    lineHeight: 23,
   },
   buttonContainer: {
     width: "100%",
-    paddingHorizontal: 16,
+    alignItems: "center",
+    backgroundColor: "transparent",
   },
   spotifyButton: {
     backgroundColor: "#1DB954",
@@ -144,11 +173,11 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingVertical: 16,
     paddingHorizontal: 32,
-    borderRadius: 50,
+    borderRadius: 16,
     width: "100%",
   },
   spotifyButtonPressed: {
-    opacity: 0.8,
+    opacity: 0.85,
     transform: [{ scale: 0.98 }],
   },
   buttonIcon: {
@@ -156,13 +185,15 @@ const styles = StyleSheet.create({
   },
   buttonText: {
     color: "#fff",
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: "700",
   },
-  footer: {
-    marginTop: 32,
-    fontSize: 14,
-    opacity: 0.4,
+  disclaimer: {
+    marginTop: 20,
+    fontSize: 12,
+    color: theme.textMuted,
     textAlign: "center",
+    lineHeight: 18,
+    paddingHorizontal: 20,
   },
 });

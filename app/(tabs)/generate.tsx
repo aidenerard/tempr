@@ -11,7 +11,9 @@ import {
 import { Text, View } from "@/components/Themed";
 import { useState, useRef, useCallback } from "react";
 import { FontAwesome } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/lib/AuthContext";
+import { theme } from "@/constants/Colors";
 import {
   getTopTracks,
   getTopArtists,
@@ -22,7 +24,6 @@ import {
 } from "@/lib/spotify";
 import { generateQueueSuggestions } from "@/lib/gemini";
 
-const TARGET_MIN_MINUTES = 30;
 const TARGET_MAX_MINUTES = 45;
 
 type Message = {
@@ -42,19 +43,17 @@ const THINKING_MESSAGES = [
 
 export default function GenerateScreen() {
   const { spotifyToken } = useAuth();
+  const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [generating, setGenerating] = useState(false);
   const flatListRef = useRef<FlatList>(null);
 
-  const updateThinking = useCallback(
-    (id: string, text: string) => {
-      setMessages((prev) =>
-        prev.map((m) => (m.id === id ? { ...m, text } : m))
-      );
-    },
-    []
-  );
+  const updateThinking = useCallback((id: string, text: string) => {
+    setMessages((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, text } : m))
+    );
+  }, []);
 
   const handleGenerate = async () => {
     const prompt = input.trim();
@@ -64,7 +63,7 @@ export default function GenerateScreen() {
       const errorMsg: Message = {
         id: Date.now().toString(),
         role: "assistant",
-        text: "Spotify isn't connected. Please sign out and log back in to reconnect.",
+        text: "Spotify isn't connected. Head to Profile and reconnect.",
       };
       setMessages((prev) => [...prev, errorMsg]);
       return;
@@ -106,27 +105,53 @@ export default function GenerateScreen() {
 
       updateThinking(thinkingId, THINKING_MESSAGES[3]());
 
-      const searchResults = await Promise.all(
-        suggestions.searches.map((q) =>
-          searchTracks(spotifyToken, q, 1).catch(() => [])
-        )
-      );
+      const [familiarResults, discoveryResults] = await Promise.all([
+        Promise.all(
+          (suggestions.familiar ?? []).map((q) =>
+            searchTracks(spotifyToken, q, 1).catch(() => [])
+          )
+        ),
+        Promise.all(
+          (suggestions.discoveries ?? []).map((q) =>
+            searchTracks(spotifyToken, q, 1).catch(() => [])
+          )
+        ),
+      ]);
 
-      const allTracks = searchResults
-        .flat()
-        .filter(
-          (track, idx, self) =>
-            track && self.findIndex((t) => t.id === track.id) === idx
-        );
+      const familiarTracks = familiarResults.flat().filter(Boolean);
+      const discoveryTracks = discoveryResults.flat().filter(Boolean);
+
+      const seen = new Set<string>();
+      const dedup = (tracks: SpotifyTrack[]) =>
+        tracks.filter((t) => {
+          if (seen.has(t.id)) return false;
+          seen.add(t.id);
+          return true;
+        });
+
+      const familiar = dedup(familiarTracks);
+      const discoveries = dedup(discoveryTracks);
 
       const queue: SpotifyTrack[] = [];
+      let fi = 0;
+      let di = 0;
       let runningMs = 0;
       const targetMaxMs = TARGET_MAX_MINUTES * 60000;
 
-      for (const track of allTracks) {
-        if (runningMs >= targetMaxMs) break;
-        queue.push(track);
-        runningMs += track.duration_ms;
+      while (
+        runningMs < targetMaxMs &&
+        (fi < familiar.length || di < discoveries.length)
+      ) {
+        if (fi < familiar.length) {
+          queue.push(familiar[fi++]);
+          runningMs += queue[queue.length - 1].duration_ms;
+          if (runningMs >= targetMaxMs) break;
+        }
+        for (let n = 0; n < 2 && di < discoveries.length; n++) {
+          queue.push(discoveries[di++]);
+          runningMs += queue[queue.length - 1].duration_ms;
+          if (runningMs >= targetMaxMs) break;
+        }
       }
 
       const minutes = totalDurationMinutes(queue);
@@ -169,7 +194,7 @@ export default function GenerateScreen() {
           <Image source={{ uri: albumArt }} style={styles.albumArt} />
         ) : (
           <View style={styles.albumPlaceholder}>
-            <FontAwesome name="music" size={14} color="#666" />
+            <FontAwesome name="music" size={14} color={theme.textMuted} />
           </View>
         )}
         <View style={styles.trackInfo}>
@@ -204,7 +229,7 @@ export default function GenerateScreen() {
           {isThinking && (
             <ActivityIndicator
               size="small"
-              color="#1DB954"
+              color={theme.primary}
               style={styles.thinkingSpinner}
             />
           )}
@@ -214,12 +239,18 @@ export default function GenerateScreen() {
           <View style={styles.trackList}>
             {item.tracks.map((track, i) => renderTrack(track, i))}
             <View style={styles.queueFooter}>
-              <Text style={styles.queueStat}>
-                {item.tracks.length} tracks
-              </Text>
-              <Text style={styles.queueStat}>
-                ~{item.totalMinutes} min
-              </Text>
+              <View style={styles.queueStat}>
+                <FontAwesome name="music" size={11} color={theme.primary} />
+                <Text style={styles.queueStatText}>
+                  {item.tracks.length} tracks
+                </Text>
+              </View>
+              <View style={styles.queueStat}>
+                <FontAwesome name="clock-o" size={11} color={theme.primary} />
+                <Text style={styles.queueStatText}>
+                  ~{item.totalMinutes} min
+                </Text>
+              </View>
             </View>
           </View>
         )}
@@ -229,17 +260,23 @@ export default function GenerateScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { paddingTop: insets.top }]}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
-      keyboardVerticalOffset={90}
+      keyboardVerticalOffset={0}
     >
+      <View style={styles.headerBar}>
+        <Text style={styles.headerTitle}>Generate</Text>
+      </View>
+
       {messages.length === 0 ? (
         <View style={styles.emptyState}>
-          <FontAwesome name="magic" size={48} color="#1DB954" />
-          <Text style={styles.emptyTitle}>Generate a Queue</Text>
+          <View style={styles.emptyIconWrap}>
+            <FontAwesome name="magic" size={32} color={theme.primary} />
+          </View>
+          <Text style={styles.emptyTitle}>Create Your Queue</Text>
           <Text style={styles.emptySubtitle}>
-            Describe a mood, vibe, or scenario and Tempr will create a
-            personalized 30-45 minute queue from your taste.
+            Describe a mood, vibe, or scenario and Tempr will build a
+            personalized 30–45 minute queue.
           </Text>
           <View style={styles.exampleChips}>
             {[
@@ -250,7 +287,10 @@ export default function GenerateScreen() {
             ].map((example) => (
               <Pressable
                 key={example}
-                style={styles.chip}
+                style={({ pressed }) => [
+                  styles.chip,
+                  pressed && styles.chipPressed,
+                ]}
                 onPress={() => setInput(example)}
               >
                 <Text style={styles.chipText}>{example}</Text>
@@ -275,7 +315,7 @@ export default function GenerateScreen() {
         <TextInput
           style={styles.input}
           placeholder="Describe a vibe..."
-          placeholderTextColor="#999"
+          placeholderTextColor={theme.textMuted}
           value={input}
           onChangeText={setInput}
           onSubmitEditing={handleGenerate}
@@ -294,7 +334,7 @@ export default function GenerateScreen() {
           {generating ? (
             <ActivityIndicator color="#fff" size="small" />
           ) : (
-            <FontAwesome name="arrow-up" size={18} color="#fff" />
+            <FontAwesome name="arrow-up" size={16} color="#fff" />
           )}
         </Pressable>
       </View>
@@ -309,56 +349,97 @@ function formatMoodSummary(af: {
   tempo: number;
 }): string {
   const energyLabel =
-    af.energy < 0.3 ? "low energy" : af.energy < 0.7 ? "moderate energy" : "high energy";
+    af.energy < 0.3
+      ? "low energy"
+      : af.energy < 0.7
+        ? "moderate energy"
+        : "high energy";
   const moodLabel =
-    af.valence < 0.3 ? "melancholic" : af.valence < 0.7 ? "balanced" : "uplifting";
+    af.valence < 0.3
+      ? "melancholic"
+      : af.valence < 0.7
+        ? "balanced"
+        : "uplifting";
   const danceLabel =
-    af.danceability < 0.3 ? "freeform" : af.danceability < 0.7 ? "groovy" : "danceable";
+    af.danceability < 0.3
+      ? "freeform"
+      : af.danceability < 0.7
+        ? "groovy"
+        : "danceable";
 
-  return `Mood: ${moodLabel} / ${energyLabel} / ${danceLabel} / ~${Math.round(af.tempo)} BPM`;
+  return `${moodLabel} · ${energyLabel} · ${danceLabel} · ~${Math.round(af.tempo)} BPM`;
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: theme.bg,
+  },
+  headerBar: {
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    backgroundColor: "transparent",
+  },
+  headerTitle: {
+    fontSize: 28,
+    fontWeight: "800",
+    color: theme.text,
+    letterSpacing: -0.5,
   },
   emptyState: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: 32,
+    backgroundColor: "transparent",
+  },
+  emptyIconWrap: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: theme.primaryMuted,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 20,
   },
   emptyTitle: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "700",
-    marginTop: 16,
+    color: theme.text,
+    letterSpacing: -0.3,
   },
   emptySubtitle: {
-    fontSize: 15,
-    opacity: 0.5,
+    fontSize: 14,
+    color: theme.textSecondary,
     textAlign: "center",
     marginTop: 8,
-    lineHeight: 22,
+    lineHeight: 21,
+    paddingHorizontal: 12,
   },
   exampleChips: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "center",
-    marginTop: 24,
+    marginTop: 28,
     gap: 8,
+    backgroundColor: "transparent",
   },
   chip: {
-    backgroundColor: "rgba(29, 185, 84, 0.12)",
+    backgroundColor: theme.primaryMuted,
     borderWidth: 1,
-    borderColor: "rgba(29, 185, 84, 0.25)",
+    borderColor: theme.primaryBorder,
     borderRadius: 20,
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 9,
+  },
+  chipPressed: {
+    opacity: 0.7,
+    transform: [{ scale: 0.96 }],
   },
   chipText: {
     fontSize: 13,
-    color: "#1DB954",
-    fontWeight: "500",
+    color: theme.primary,
+    fontWeight: "600",
   },
   messageList: {
     padding: 16,
@@ -366,7 +447,7 @@ const styles = StyleSheet.create({
   },
   userBubble: {
     alignSelf: "flex-end",
-    backgroundColor: "#1DB954",
+    backgroundColor: theme.primary,
     borderRadius: 18,
     borderBottomRightRadius: 4,
     paddingHorizontal: 16,
@@ -377,16 +458,18 @@ const styles = StyleSheet.create({
   userText: {
     color: "#fff",
     fontSize: 15,
-    fontWeight: "500",
+    fontWeight: "600",
   },
   assistantSection: {
     marginBottom: 16,
+    backgroundColor: "transparent",
   },
   assistantBubble: {
     flexDirection: "row",
     alignItems: "flex-start",
     marginBottom: 12,
     paddingHorizontal: 4,
+    backgroundColor: "transparent",
   },
   thinkingSpinner: {
     marginRight: 8,
@@ -394,16 +477,16 @@ const styles = StyleSheet.create({
   },
   assistantText: {
     fontSize: 14,
-    opacity: 0.7,
+    color: theme.textSecondary,
     flex: 1,
-    lineHeight: 20,
+    lineHeight: 21,
   },
   trackList: {
-    borderRadius: 12,
+    borderRadius: 14,
     overflow: "hidden",
-    backgroundColor: "rgba(255,255,255,0.03)",
+    backgroundColor: theme.surface,
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.06)",
+    borderColor: theme.surfaceBorder,
   },
   trackRow: {
     flexDirection: "row",
@@ -411,24 +494,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "rgba(255,255,255,0.06)",
+    borderBottomColor: theme.surfaceBorder,
+    backgroundColor: "transparent",
   },
   trackIndex: {
     width: 24,
     fontSize: 12,
-    opacity: 0.3,
+    color: theme.textMuted,
     textAlign: "center",
+    fontWeight: "500",
   },
   albumArt: {
-    width: 40,
-    height: 40,
-    borderRadius: 4,
+    width: 42,
+    height: 42,
+    borderRadius: 6,
   },
   albumPlaceholder: {
-    width: 40,
-    height: 40,
-    borderRadius: 4,
-    backgroundColor: "#2a2a2a",
+    width: 42,
+    height: 42,
+    borderRadius: 6,
+    backgroundColor: theme.surfaceLight,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -440,27 +525,36 @@ const styles = StyleSheet.create({
   trackName: {
     fontSize: 14,
     fontWeight: "600",
+    color: theme.text,
   },
   trackArtist: {
     fontSize: 12,
-    opacity: 0.5,
+    color: theme.textSecondary,
     marginTop: 2,
   },
   trackDuration: {
     fontSize: 12,
-    opacity: 0.4,
+    color: theme.textMuted,
     marginLeft: 8,
+    fontVariant: ["tabular-nums"],
   },
   queueFooter: {
     flexDirection: "row",
     justifyContent: "center",
-    gap: 16,
-    paddingVertical: 10,
+    gap: 20,
+    paddingVertical: 12,
     backgroundColor: "transparent",
   },
   queueStat: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "transparent",
+  },
+  queueStatText: {
     fontSize: 12,
-    opacity: 0.4,
+    color: theme.textSecondary,
+    fontWeight: "500",
   },
   inputContainer: {
     flexDirection: "row",
@@ -468,28 +562,31 @@ const styles = StyleSheet.create({
     padding: 12,
     paddingBottom: Platform.OS === "ios" ? 28 : 12,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "rgba(255,255,255,0.1)",
+    borderTopColor: theme.surfaceBorder,
     gap: 8,
+    backgroundColor: theme.bg,
   },
   input: {
     flex: 1,
-    backgroundColor: "rgba(255,255,255,0.08)",
+    backgroundColor: theme.surface,
     borderRadius: 22,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
     paddingHorizontal: 18,
     paddingVertical: 12,
     fontSize: 15,
-    color: "#000",
+    color: theme.text,
     maxHeight: 100,
   },
   sendButton: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: "#1DB954",
+    backgroundColor: theme.primary,
     alignItems: "center",
     justifyContent: "center",
   },
   sendButtonDisabled: {
-    opacity: 0.4,
+    opacity: 0.3,
   },
 });
