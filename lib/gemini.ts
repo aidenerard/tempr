@@ -11,6 +11,8 @@ export type AudioFeatureTargets = {
   danceability: number;
   acousticness: number;
   tempo: number;
+  instrumentalness?: number;
+  liveness?: number;
 };
 
 export type QueueSuggestion = {

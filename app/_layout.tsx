@@ -3,12 +3,14 @@ import { ThemeProvider, DarkTheme } from "@react-navigation/native";
 import { useFonts } from "expo-font";
 import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
+import * as Notifications from "expo-notifications";
+import { useEffect, useRef } from "react";
 import { StatusBar } from "expo-status-bar";
 import "react-native-reanimated";
 
 import { AuthProvider, useAuth } from "@/lib/AuthContext";
 import { theme } from "@/constants/Colors";
+import type { PromptedQueueNotificationData } from "@/lib/notifications";
 
 export { ErrorBoundary } from "expo-router";
 
@@ -68,11 +70,37 @@ export default function RootLayout() {
   );
 }
 
+function NotificationHandler() {
+  const router = useRouter();
+  const responseListener = useRef<Notifications.EventSubscription | null>(null);
+
+  useEffect(() => {
+    responseListener.current =
+      Notifications.addNotificationResponseReceivedListener((response) => {
+        const data = response.notification.request.content
+          .data as PromptedQueueNotificationData | undefined;
+
+        if (data?.type === "prompted_queue") {
+          router.push("/prompted-queue");
+        }
+      });
+
+    return () => {
+      if (responseListener.current) {
+        responseListener.current.remove();
+      }
+    };
+  }, [router]);
+
+  return null;
+}
+
 function RootLayoutNav() {
   return (
     <ThemeProvider value={TemprDark}>
       <StatusBar style="light" />
       <AuthGate>
+        <NotificationHandler />
         <Stack
           screenOptions={{
             headerShown: false,
@@ -82,6 +110,14 @@ function RootLayoutNav() {
         >
           <Stack.Screen name="login" />
           <Stack.Screen name="(tabs)" />
+          <Stack.Screen
+            name="prompted-queue"
+            options={{ animation: "slide_from_bottom", presentation: "modal" }}
+          />
+          <Stack.Screen
+            name="settings"
+            options={{ animation: "slide_from_right" }}
+          />
         </Stack>
       </AuthGate>
     </ThemeProvider>

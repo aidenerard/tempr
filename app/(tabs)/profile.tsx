@@ -3,11 +3,13 @@ import { Text, View } from "@/components/Themed";
 import { useAuth } from "@/lib/AuthContext";
 import { FontAwesome } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { theme } from "@/constants/Colors";
 
 export default function ProfileScreen() {
   const { session, spotifyToken, signOut } = useAuth();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
   const user = session?.user;
   const meta = user?.user_metadata;
@@ -60,6 +62,26 @@ export default function ProfileScreen() {
           />
         </View>
       </View>
+
+      <Text style={styles.sectionTitle}>Features</Text>
+
+      <Pressable
+        style={({ pressed }) => [
+          styles.menuCard,
+          pressed && { opacity: 0.7 },
+        ]}
+        onPress={() => router.push("/settings")}
+      >
+        <View style={styles.menuRow}>
+          <FontAwesome name="magic" size={16} color={theme.primary} />
+          <Text style={styles.menuLabel}>Smart Prompts</Text>
+          <FontAwesome name="chevron-right" size={12} color={theme.textMuted} />
+        </View>
+        <Text style={styles.menuSubtext}>
+          Configure context-aware queue notifications, permissions, and quiet
+          hours
+        </Text>
+      </Pressable>
 
       <Text style={styles.sectionTitle}>App</Text>
 
@@ -223,6 +245,12 @@ const styles = StyleSheet.create({
   menuValue: {
     fontSize: 13,
     color: theme.textSecondary,
+  },
+  menuSubtext: {
+    fontSize: 12,
+    color: theme.textSecondary,
+    marginTop: 8,
+    lineHeight: 17,
   },
   menuDivider: {
     height: StyleSheet.hairlineWidth,

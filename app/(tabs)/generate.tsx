@@ -34,7 +34,12 @@ type Message = {
   totalMinutes?: number;
 };
 
-const THINKING_MESSAGES = [
+const THINKING_MESSAGES: [
+  (prompt: string) => string,
+  () => string,
+  () => string,
+  () => string,
+] = [
   (prompt: string) => `Creating a queue for "${prompt}"...`,
   () => "Analyzing your listening history...",
   () => "Mapping the mood to audio features...",

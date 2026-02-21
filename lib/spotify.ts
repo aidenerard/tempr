@@ -94,9 +94,11 @@ export async function getRecommendations(
     params.set("target_valence", af.valence.toFixed(2));
     params.set("target_danceability", af.danceability.toFixed(2));
     params.set("target_acousticness", af.acousticness.toFixed(2));
-    params.set("target_instrumentalness", af.instrumentalness.toFixed(2));
+    if (af.instrumentalness != null)
+      params.set("target_instrumentalness", af.instrumentalness.toFixed(2));
     params.set("target_tempo", af.tempo.toFixed(0));
-    params.set("target_liveness", af.liveness.toFixed(2));
+    if (af.liveness != null)
+      params.set("target_liveness", af.liveness.toFixed(2));
   }
 
   params.set("limit", String(opts.limit ?? 30));
@@ -106,6 +108,76 @@ export async function getRecommendations(
     token
   );
   return data.tracks ?? [];
+}
+
+export type AudioFeatures = {
+  id: string;
+  energy: number;
+  valence: number;
+  danceability: number;
+  acousticness: number;
+  instrumentalness: number;
+  tempo: number;
+  liveness: number;
+  speechiness: number;
+  loudness: number;
+  key: number;
+  mode: number;
+};
+
+export async function getAudioFeatures(
+  token: string,
+  trackIds: string[]
+): Promise<AudioFeatures[]> {
+  if (trackIds.length === 0) return [];
+  const chunks: AudioFeatures[] = [];
+  for (let i = 0; i < trackIds.length; i += 100) {
+    const batch = trackIds.slice(i, i + 100);
+    const data = await spotifyFetch(
+      `/audio-features?ids=${batch.join(",")}`,
+      token
+    );
+    chunks.push(...(data.audio_features?.filter(Boolean) ?? []));
+  }
+  return chunks;
+}
+
+export async function getRecentlyPlayed(
+  token: string,
+  limit = 50
+): Promise<SpotifyTrack[]> {
+  const data = await spotifyFetch(
+    `/me/player/recently-played?limit=${limit}`,
+    token
+  );
+  return (data.items ?? []).map((item: any) => item.track);
+}
+
+export async function getSavedTracks(
+  token: string,
+  limit = 50
+): Promise<SpotifyTrack[]> {
+  const data = await spotifyFetch(
+    `/me/tracks?limit=${limit}`,
+    token
+  );
+  return (data.items ?? []).map((item: any) => item.track);
+}
+
+export async function getCurrentPlayback(
+  token: string
+): Promise<{ isPlaying: boolean } | null> {
+  try {
+    const res = await fetch(`${SPOTIFY_BASE}/me/player`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status === 204) return { isPlaying: false };
+    if (!res.ok) return null;
+    const data = await res.json();
+    return { isPlaying: data.is_playing ?? false };
+  } catch {
+    return null;
+  }
 }
 
 export function formatDuration(ms: number): string {

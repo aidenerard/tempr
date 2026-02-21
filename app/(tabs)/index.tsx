@@ -1,10 +1,11 @@
-import { StyleSheet, ScrollView, Pressable } from "react-native";
+import { StyleSheet, ScrollView, Pressable, ActivityIndicator } from "react-native";
 import { Text, View } from "@/components/Themed";
 import { useAuth } from "@/lib/AuthContext";
 import { FontAwesome } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { theme } from "@/constants/Colors";
+import { useContextMonitor } from "@/lib/useContextMonitor";
 
 function getGreeting(): string {
   const h = new Date().getHours();
@@ -26,6 +27,7 @@ export default function HomeScreen() {
   const { session } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { pendingQueue, isChecking } = useContextMonitor();
 
   const displayName =
     session?.user?.user_metadata?.full_name ||
@@ -43,6 +45,46 @@ export default function HomeScreen() {
         <Text style={styles.greeting}>{getGreeting()},</Text>
         <Text style={styles.name}>{firstName}</Text>
       </View>
+
+      {pendingQueue && (
+        <Pressable
+          style={({ pressed }) => [
+            styles.promptedCard,
+            pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] },
+          ]}
+          onPress={() => router.push("/prompted-queue")}
+        >
+          <View style={styles.promptedGlow} />
+          <View style={styles.promptedHeader}>
+            <Text style={styles.promptedEmoji}>
+              {pendingQueue.vibe.emoji}
+            </Text>
+            <View style={styles.promptedBadge}>
+              <Text style={styles.promptedBadgeText}>For You</Text>
+            </View>
+          </View>
+          <Text style={styles.promptedTitle}>{pendingQueue.vibe.label}</Text>
+          <Text style={styles.promptedSubtitle}>
+            {pendingQueue.vibe.description}
+          </Text>
+          <View style={styles.promptedMeta}>
+            <Text style={styles.promptedMetaText}>
+              {pendingQueue.tracks.length} tracks · ~
+              {pendingQueue.totalDurationMin} min
+            </Text>
+            <FontAwesome name="chevron-right" size={12} color={theme.primary} />
+          </View>
+        </Pressable>
+      )}
+
+      {isChecking && !pendingQueue && (
+        <View style={styles.checkingCard}>
+          <ActivityIndicator size="small" color={theme.primary} />
+          <Text style={styles.checkingText}>
+            Checking your vibe...
+          </Text>
+        </View>
+      )}
 
       <View style={styles.heroCard}>
         <View style={styles.heroGlow} />
@@ -211,6 +253,87 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600",
     color: theme.text,
+  },
+  promptedCard: {
+    backgroundColor: theme.surface,
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: theme.primaryBorder,
+    overflow: "hidden",
+  },
+  promptedGlow: {
+    position: "absolute",
+    top: -30,
+    left: -30,
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: theme.primaryMuted,
+  },
+  promptedHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 10,
+    backgroundColor: "transparent",
+  },
+  promptedEmoji: {
+    fontSize: 28,
+  },
+  promptedBadge: {
+    backgroundColor: theme.primaryMuted,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  promptedBadgeText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: theme.primary,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  promptedTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: theme.text,
+    letterSpacing: -0.3,
+  },
+  promptedSubtitle: {
+    fontSize: 13,
+    color: theme.textSecondary,
+    marginTop: 4,
+    lineHeight: 19,
+  },
+  promptedMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 14,
+    backgroundColor: "transparent",
+  },
+  promptedMetaText: {
+    fontSize: 12,
+    color: theme.textMuted,
+    fontWeight: "500",
+  },
+  checkingCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: theme.surface,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+  },
+  checkingText: {
+    fontSize: 13,
+    color: theme.textSecondary,
+    fontWeight: "500",
   },
   tipCard: {
     flexDirection: "row",

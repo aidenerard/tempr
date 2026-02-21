@@ -15,7 +15,12 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.tempr.app"
+      "bundleIdentifier": "com.tempr.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Tempr uses your location to suggest music that matches where you are — like the gym, a cafe, or an airport.",
+        "NSCalendarsUsageDescription": "Tempr reads your upcoming calendar events to suggest pre-event queues, like a workout or date night playlist.",
+        "NSCalendarsFullAccessUsageDescription": "Tempr reads your upcoming calendar events to suggest pre-event queues, like a workout or date night playlist."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -31,7 +36,26 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Tempr uses your location to suggest music that matches where you are."
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Tempr reads your upcoming events to suggest pre-event queues."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#FF6B2C"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
