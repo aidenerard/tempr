@@ -1,0 +1,21 @@
+# Tempr - Mobile Music Queue Generation App
+
+## Tech Stack
+- **Frontend**: React Native (Expo)
+- **Styling**: NativeWind (Tailwind CSS)
+- **Backend**: Supabase (database, auth, edge functions)
+- **Deployment**: Vercel
+- **APIs**: Spotify, OpenWeather, Gemini, Google Calendar, CLIP, OpenL3
+
+## Architecture
+- Use TypeScript throughout
+- Keep components modular and reusable
+- Use react-native-gesture-handler + reanimated for swipe/scroll
+- Abstract API calls in /src/services
+- Color scheme in src/theme/colors.ts for dynamic theming
+- Environment variables for all API keys - never hardcode
+
+## Key Conventions
+- ML/AI logic (CLIP, OpenL3, Gemini): add clear comments
+- Default to clean, minimal mobile-first UX
+- Run `npm test` before committing
