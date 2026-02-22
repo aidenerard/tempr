@@ -241,6 +241,95 @@ Evaluate the queue against the adjusted vibe, remove the ${removeCount} worst-fi
   throw new Error("Failed to generate queue adjustment");
 }
 
+export async function generateEventPlaylist(
+  eventTitle: string,
+  eventLocation: string | undefined,
+  likedTracks: SpotifyTrack[],
+): Promise<QueueSuggestion> {
+  const trackContext = (likedTracks ?? [])
+    .slice(0, 200)
+    .map((t) => `"${t.name}" by ${t.artists?.[0]?.name ?? "Unknown"}`)
+    .join(", ");
+
+  const systemPrompt = `You are a music curator AI for an app called Tempr. Given a calendar event title (and optionally a location), infer the mood/atmosphere of the event and generate a fitting playlist from the user's liked songs.
+
+RESPOND WITH ONLY A JSON OBJECT. No markdown, no code fences, no explanation before or after. Just the raw JSON object.
+
+JSON schema:
+{
+  "audioFeatures": {
+    "energy": <number 0.0-1.0>,
+    "valence": <number 0.0-1.0>,
+    "danceability": <number 0.0-1.0>,
+    "acousticness": <number 0.0-1.0>,
+    "tempo": <number 60-200>
+  },
+  "familiar": ["song title - artist name", ...],
+  "discoveries": [],
+  "reasoning": "one sentence explaining how the event title maps to a mood and why these songs fit"
+}
+
+MOOD INFERENCE GUIDELINES:
+- "Meeting", "Standup", "Interview" → focused, calm, moderate energy
+- "Gym", "Workout", "Run" → high energy, upbeat, danceable
+- "Dinner", "Date", "Coffee" → warm, relaxed, moderate valence
+- "Party", "Birthday", "Celebration" → high energy, high valence, danceable
+- "Study", "Exam", "Homework" → low energy, high acousticness, calm
+- "Yoga", "Meditation" → very low energy, high acousticness, peaceful
+- Use the event title creatively to infer the best atmosphere.
+
+CRITICAL RULES:
+- "familiar": Pick 8-10 songs ONLY from the user's liked songs list below that fit the inferred mood.
+- "discoveries": Always return an empty array [].
+- You must ONLY pick songs that appear in the user's liked songs list.
+- Output ONLY the JSON object, nothing else.`;
+
+  const locationContext = eventLocation
+    ? ` (Location: ${eventLocation})`
+    : "";
+  const userMessage = `Calendar event: "${eventTitle}"${locationContext}
+
+User's liked songs: ${trackContext}
+
+Infer the mood from this event and generate a playlist from ONLY the liked songs. Reply with ONLY the JSON object.`;
+
+  const maxAttempts = 2;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: userMessage,
+      config: {
+        systemInstruction: systemPrompt,
+        responseMimeType: "application/json",
+        maxOutputTokens: 4096,
+        thinkingConfig: { thinkingBudget: 1024 },
+        temperature: 0.85,
+      },
+    });
+
+    const raw = (response.text ?? "").trim();
+    if (!raw) continue;
+
+    try {
+      return JSON.parse(raw) as QueueSuggestion;
+    } catch {
+      const jsonStr = extractJson(raw);
+      if (jsonStr) {
+        try {
+          const sanitized = jsonStr
+            .replace(/,\s*}/g, "}")
+            .replace(/,\s*]/g, "]");
+          return JSON.parse(sanitized) as QueueSuggestion;
+        } catch {
+          /* retry */
+        }
+      }
+    }
+  }
+
+  throw new Error("Failed to generate event playlist");
+}
+
 export async function generateReplacementSong(
   currentSongs: string[],
   prompt: string,
