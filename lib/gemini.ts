@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import type { SpotifyTrack, SpotifyArtist } from "./spotify";
+import type { SpotifyTrack } from "./spotify";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.EXPO_PUBLIC_GEMINI_API_KEY!,
@@ -56,20 +56,14 @@ function extractJson(raw: string): string | null {
 
 export async function generateQueueSuggestions(
   prompt: string,
-  topTracks: SpotifyTrack[],
-  topArtists: SpotifyArtist[]
+  likedTracks: SpotifyTrack[],
 ): Promise<QueueSuggestion> {
-  const trackContext = (topTracks ?? [])
-    .slice(0, 50)
+  const trackContext = (likedTracks ?? [])
+    .slice(0, 200)
     .map((t) => `"${t.name}" by ${t.artists?.[0]?.name ?? "Unknown"}`)
     .join(", ");
 
-  const artistContext = (topArtists ?? [])
-    .slice(0, 30)
-    .map((a) => `${a.name} (${(a.genres ?? []).slice(0, 3).join(", ")})`)
-    .join(", ");
-
-  const systemPrompt = `You are a music curator AI for an app called Tempr. Given a user's mood/vibe description and their listening history, generate a JSON response.
+  const systemPrompt = `You are a music curator AI for an app called Tempr. Given a user's mood/vibe description and their liked songs library, generate a JSON response.
 
 RESPOND WITH ONLY A JSON OBJECT. No markdown, no code fences, no explanation before or after. Just the raw JSON object.
 
@@ -95,17 +89,16 @@ Audio feature guidelines:
 - tempo: BPM (60=slow ballad, 100=mid-tempo, 120=upbeat, 150+=fast)
 
 CRITICAL RULES:
-- "familiar": Pick 10-12 songs FROM the user's top tracks that fit the mood. Use EXACT song titles and artist names from their history.
+- "familiar": Pick 10-12 songs ONLY from the user's liked songs list below that fit the mood. Use EXACT song titles and artist names from their liked songs.
 - "discoveries": Always return an empty array [].
-- All songs must be REAL tracks on Spotify.
+- You must ONLY pick songs that appear in the user's liked songs list. Do NOT suggest any song that is not in the list.
 - Output ONLY the JSON object, nothing else.`;
 
   const userMessage = `Mood/vibe: "${prompt}"
 
-User's top tracks: ${trackContext}
-User's top artists: ${artistContext}
+User's liked songs: ${trackContext}
 
-Generate a queue that matches this vibe. Reply with ONLY the JSON object.`;
+Generate a queue from ONLY the liked songs above that matches this vibe. Reply with ONLY the JSON object.`;
 
   const maxAttempts = 2;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -160,17 +153,11 @@ export async function adjustQueueSuggestions(
   currentSongs: string[],
   originalPrompt: string,
   adjustment: string,
-  topTracks: SpotifyTrack[],
-  topArtists: SpotifyArtist[],
+  likedTracks: SpotifyTrack[],
 ): Promise<QueueAdjustment> {
-  const trackContext = (topTracks ?? [])
-    .slice(0, 50)
+  const trackContext = (likedTracks ?? [])
+    .slice(0, 200)
     .map((t) => `"${t.name}" by ${t.artists?.[0]?.name ?? "Unknown"}`)
-    .join(", ");
-
-  const artistContext = (topArtists ?? [])
-    .slice(0, 30)
-    .map((a) => `${a.name} (${(a.genres ?? []).slice(0, 3).join(", ")})`)
     .join(", ");
 
   const removeCount = Math.max(1, Math.ceil(currentSongs.length * 0.4));
@@ -196,7 +183,7 @@ JSON schema:
 CRITICAL RULES:
 - Evaluate every song in the current queue against the ADJUSTED vibe.
 - "remove": Pick exactly ${removeCount} songs that LEAST fit the adjusted vibe. Use the EXACT names from the current queue.
-- "additions": Generate ${removeCount} replacement songs that perfectly match the adjusted vibe. All must be REAL tracks on Spotify. Mix familiar picks from the user's history with discoveries.
+- "additions": Pick exactly ${removeCount} replacement songs ONLY from the user's liked songs list below. Use EXACT song titles and artist names. Do NOT suggest songs that are not in the liked songs list.
 - "audioFeatures": Reflect the ADJUSTED vibe (original + adjustment combined).
 - Output ONLY the JSON object.`;
 
@@ -206,10 +193,9 @@ Adjustment requested: "${adjustment}"
 Current queue:
 ${currentSongs.map((s, i) => `${i + 1}. ${s}`).join("\n")}
 
-User's top tracks: ${trackContext}
-User's top artists: ${artistContext}
+User's liked songs: ${trackContext}
 
-Evaluate the queue against the adjusted vibe, remove the ${removeCount} worst-fitting songs, and suggest ${removeCount} replacements. Reply with ONLY JSON.`;
+Evaluate the queue against the adjusted vibe, remove the ${removeCount} worst-fitting songs, and suggest ${removeCount} replacements from ONLY the liked songs. Reply with ONLY JSON.`;
 
   const maxAttempts = 2;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -251,24 +237,24 @@ export async function generateReplacementSong(
   prompt: string,
   topTrackNames: string[],
 ): Promise<string> {
-  const systemPrompt = `You are a music curator AI. Given a queue of songs, the original vibe, and the user's listening history, suggest exactly ONE replacement song.
+  const systemPrompt = `You are a music curator AI. Given a queue of songs, the original vibe, and the user's liked songs, suggest exactly ONE replacement song.
 
 RESPOND WITH ONLY A JSON OBJECT:
 { "song": "song title - artist name" }
 
 CRITICAL RULES:
-- Pick ONLY from the user's top tracks listed below
+- Pick ONLY from the user's liked songs listed below
 - The song must NOT already be in the queue
 - It should match the mood/vibe of the existing queue
-- Use the EXACT song title and artist name from the user's history
+- Use the EXACT song title and artist name from the user's liked songs
 - Output ONLY the JSON object`;
 
   const userMessage = `Original vibe: "${prompt}"
 Current queue: ${currentSongs.join(", ")}
 
-User's top tracks: ${topTrackNames.join(", ")}
+User's liked songs: ${topTrackNames.join(", ")}
 
-Pick ONE song from the user's top tracks that fits this vibe and isn't in the queue. Reply with ONLY JSON.`;
+Pick ONE song from the user's liked songs that fits this vibe and isn't in the queue. Reply with ONLY JSON.`;
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",

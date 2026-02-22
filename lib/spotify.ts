@@ -137,9 +137,75 @@ export async function addToQueue(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `Failed to add to queue: ${res.status}`);
+    throw new Error(
+      err.error?.message || `Failed to add to queue: ${res.status}`,
+    );
   }
 }
+
+export async function getLikedTracks(
+  token: string,
+  limit = 2000,
+): Promise<SpotifyTrack[]> {
+  const tracks: SpotifyTrack[] = [];
+  let offset = 0;
+  const batchSize = Math.min(limit, 50);
+
+  while (tracks.length < limit) {
+    const data = await spotifyFetch(
+      `/me/tracks?limit=${batchSize}&offset=${offset}`,
+      token,
+    );
+    const items = data.items ?? [];
+    if (items.length === 0) break;
+    for (const item of items) {
+      if (item.track) tracks.push(item.track);
+    }
+    offset += batchSize;
+    if (items.length < batchSize) break;
+  }
+
+  return tracks.slice(0, limit);
+}
+
+export async function getAudioFeaturesForTracks(
+  token: string,
+  trackIds: string[],
+): Promise<Map<string, SpotifyAudioFeatures>> {
+  const map = new Map<string, SpotifyAudioFeatures>();
+  const batches: string[][] = [];
+  for (let i = 0; i < trackIds.length; i += 100) {
+    batches.push(trackIds.slice(i, i + 100));
+  }
+
+  for (const batch of batches) {
+    const data = await spotifyFetch(
+      `/audio-features?ids=${batch.join(",")}`,
+      token,
+    );
+    for (const af of data.audio_features ?? []) {
+      if (af?.id) map.set(af.id, af);
+    }
+  }
+
+  return map;
+}
+
+export type SpotifyAudioFeatures = {
+  id: string;
+  acousticness: number;
+  danceability: number;
+  energy: number;
+  instrumentalness: number;
+  key: number;
+  liveness: number;
+  loudness: number;
+  mode: number;
+  speechiness: number;
+  tempo: number;
+  time_signature: number;
+  valence: number;
+};
 
 export function formatDuration(ms: number): string {
   const minutes = Math.floor(ms / 60000);

@@ -1,45 +1,43 @@
-import {
-  StyleSheet,
-  TextInput,
-  Pressable,
-  FlatList,
-  Image,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  Dimensions,
-} from "react-native";
 import { Text, View } from "@/components/Themed";
-import { useState, useRef, useCallback } from "react";
-import { FontAwesome } from "@expo/vector-icons";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  withTiming,
-  withSpring,
-  runOnJS,
-  interpolate,
-  Extrapolation,
-  Easing,
-} from "react-native-reanimated";
-import { useAuth } from "@/lib/AuthContext";
 import { theme } from "@/constants/Colors";
+import { useAuth } from "@/lib/AuthContext";
 import {
-  getTopTracks,
-  getTopArtists,
-  searchTracks,
-  addToQueue,
-  type SpotifyTrack,
-  type SpotifyArtist,
-} from "@/lib/spotify";
-import {
+  adjustQueueSuggestions,
   generateQueueSuggestions,
   generateReplacementSong,
-  adjustQueueSuggestions,
 } from "@/lib/gemini";
 import { saveQueue } from "@/lib/queueStorage";
+import {
+  addToQueue,
+  getLikedTracks,
+  searchTracks,
+  type SpotifyTrack,
+} from "@/lib/spotify";
+import { FontAwesome } from "@expo/vector-icons";
+import { useCallback, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Dimensions,
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  TextInput,
+} from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, {
+  Easing,
+  Extrapolation,
+  interpolate,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type SongEntry = {
   name: string;
@@ -149,36 +147,20 @@ export default function GenerateScreen() {
     Record<string, "queuing" | "queued" | "error">
   >({});
 
-  const topTracksRef = useRef<SpotifyTrack[] | null>(null);
-  const topArtistsRef = useRef<SpotifyArtist[] | null>(null);
+  const likedTracksRef = useRef<SpotifyTrack[] | null>(null);
 
   const hasQueue = messages.some((m) => m.songs && m.songs.length > 0);
 
   const updateThinking = useCallback((id: string, text: string) => {
-    setMessages((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, text } : m)),
-    );
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, text } : m)));
   }, []);
 
   const ensureSpotifyData = async () => {
-    if (!spotifyToken)
-      return {
-        topTracks: [] as SpotifyTrack[],
-        topArtists: [] as SpotifyArtist[],
-      };
-    if (topTracksRef.current && topArtistsRef.current) {
-      return {
-        topTracks: topTracksRef.current,
-        topArtists: topArtistsRef.current,
-      };
-    }
-    const [topTracks, topArtists] = await Promise.all([
-      getTopTracks(spotifyToken, 50),
-      getTopArtists(spotifyToken, 30),
-    ]);
-    topTracksRef.current = topTracks;
-    topArtistsRef.current = topArtists;
-    return { topTracks, topArtists };
+    if (!spotifyToken) return { likedTracks: [] as SpotifyTrack[] };
+    if (likedTracksRef.current) return { likedTracks: likedTracksRef.current };
+    const likedTracks = await getLikedTracks(spotifyToken, 200);
+    likedTracksRef.current = likedTracks;
+    return { likedTracks };
   };
 
   const fetchMissingArt = useCallback(
@@ -191,8 +173,7 @@ export default function GenerateScreen() {
         try {
           const results = await searchTracks(token, songs[i].name, 1);
           const match = results[0];
-          const art =
-            match?.album.images[match.album.images.length - 1]?.url;
+          const art = match?.album.images[match.album.images.length - 1]?.url;
           if (match) {
             setMessages((prev) =>
               prev.map((m) => {
@@ -250,23 +231,20 @@ export default function GenerateScreen() {
     setGenerating(true);
 
     try {
-      updateThinking(thinkingId, "Analyzing your listening history...");
-      const { topTracks, topArtists } = await ensureSpotifyData();
+      updateThinking(thinkingId, "Loading your liked songs...");
+      const { likedTracks } = await ensureSpotifyData();
 
       updateThinking(thinkingId, "Mapping the mood to audio features...");
       const suggestions = await generateQueueSuggestions(
         prompt,
-        topTracks,
-        topArtists,
+        likedTracks,
       );
 
       updateThinking(thinkingId, "Picking the perfect tracks...");
-      const artLookup = buildArtLookup(topTracks);
-      const uriLookup = buildUriLookup(topTracks);
+      const artLookup = buildArtLookup(likedTracks);
+      const uriLookup = buildUriLookup(likedTracks);
 
-      const allSongNames = [
-        ...(suggestions.familiar ?? []),
-      ];
+      const allSongNames = [...(suggestions.familiar ?? [])];
       const songs: SongEntry[] = allSongNames.map((n) => ({
         name: n,
         albumArt: matchAlbumArt(n, artLookup),
@@ -345,7 +323,7 @@ export default function GenerateScreen() {
 
     try {
       updateThinking(thinkingId, "Re-evaluating song fit...");
-      const { topTracks, topArtists } = await ensureSpotifyData();
+      const { likedTracks } = await ensureSpotifyData();
       const currentSongNames = latestQueue.songs.map((s) => s.name);
 
       updateThinking(thinkingId, "Finding better matches...");
@@ -353,8 +331,7 @@ export default function GenerateScreen() {
         currentSongNames,
         latestQueue.prompt,
         adjustment,
-        topTracks,
-        topArtists,
+        likedTracks,
       );
 
       const removeSet = new Set(result.remove.map((r) => r.toLowerCase()));
@@ -362,8 +339,8 @@ export default function GenerateScreen() {
         (s) => !removeSet.has(s.name.toLowerCase()),
       );
 
-      const artLookup = buildArtLookup(topTracks);
-      const uriLookup = buildUriLookup(topTracks);
+      const artLookup = buildArtLookup(likedTracks);
+      const uriLookup = buildUriLookup(likedTracks);
       const newSongs: SongEntry[] = result.additions.map((n) => ({
         name: n,
         albumArt: matchAlbumArt(n, artLookup),
@@ -418,8 +395,7 @@ export default function GenerateScreen() {
     setMessages([]);
     setQueuedSongs({});
     setInput("");
-    topTracksRef.current = null;
-    topArtistsRef.current = null;
+    likedTracksRef.current = null;
   };
 
   const handleAddToQueue = async (
@@ -451,7 +427,9 @@ export default function GenerateScreen() {
     if (!spotifyToken || !msg.songs) return;
     const queuable = msg.songs
       .map((s, i) => ({ song: s, index: i }))
-      .filter(({ song, index }) => song.uri && !queuedSongs[`${msg.id}-${index}`]);
+      .filter(
+        ({ song, index }) => song.uri && !queuedSongs[`${msg.id}-${index}`],
+      );
     if (queuable.length === 0) return;
 
     const keys = queuable.map(({ index }) => `${msg.id}-${index}`);
@@ -523,18 +501,18 @@ export default function GenerateScreen() {
           removedLower,
           ...remainingSongNames.map((n) => n.toLowerCase()),
         ]);
-        const topTrackNames = (topTracksRef.current ?? [])
+        const likedTrackNames = (likedTracksRef.current ?? [])
           .map((t) => `${t.name} - ${t.artists[0]?.name ?? "Unknown"}`)
           .filter((n) => !excludeSet.has(n.toLowerCase()));
         const newSongName = await generateReplacementSong(
           remainingSongNames,
           prompt,
-          topTrackNames,
+          likedTrackNames,
         );
 
         if (newSongName.toLowerCase() === removedLower) return;
 
-        const cachedTracks = topTracksRef.current ?? [];
+        const cachedTracks = likedTracksRef.current ?? [];
         const artLookup = buildArtLookup(cachedTracks);
         const uriLookup = buildUriLookup(cachedTracks);
         const albumArt = matchAlbumArt(newSongName, artLookup);
@@ -569,17 +547,10 @@ export default function GenerateScreen() {
         <View style={styles.trackRow}>
           <Text style={styles.trackIndex}>{index + 1}</Text>
           {song.albumArt ? (
-            <Image
-              source={{ uri: song.albumArt }}
-              style={styles.albumArt}
-            />
+            <Image source={{ uri: song.albumArt }} style={styles.albumArt} />
           ) : (
             <View style={styles.albumPlaceholder}>
-              <FontAwesome
-                name="music"
-                size={14}
-                color={theme.textMuted}
-              />
+              <FontAwesome name="music" size={14} color={theme.textMuted} />
             </View>
           )}
           <View style={styles.trackInfo}>
@@ -661,11 +632,7 @@ export default function GenerateScreen() {
               {item.songs.map((song, i) => renderSong(song, i, item.id))}
               <View style={styles.queueFooter}>
                 <View style={styles.queueStat}>
-                  <FontAwesome
-                    name="music"
-                    size={11}
-                    color={theme.primary}
-                  />
+                  <FontAwesome name="music" size={11} color={theme.primary} />
                   <Text style={styles.queueStatText}>
                     {item.songs.length} tracks
                   </Text>
@@ -681,8 +648,11 @@ export default function GenerateScreen() {
                 (k) => queuedSongs[k] === "queuing",
               ).length;
               const allQueued =
-                queuableCount === 0 && queuingCount === 0 &&
-                item.songs!.some((s, i) => s.uri && queuedSongs[allKeys[i]] === "queued");
+                queuableCount === 0 &&
+                queuingCount === 0 &&
+                item.songs!.some(
+                  (s, i) => s.uri && queuedSongs[allKeys[i]] === "queued",
+                );
 
               return (
                 <View style={styles.actionRow}>
@@ -690,8 +660,14 @@ export default function GenerateScreen() {
                     style={({ pressed }) => [
                       styles.actionButton,
                       allQueued && styles.actionButtonDone,
-                      pressed && !allQueued && queuingCount === 0 && styles.actionButtonPressed,
-                      queuableCount === 0 && queuingCount === 0 && !allQueued && styles.actionButtonDisabled,
+                      pressed &&
+                        !allQueued &&
+                        queuingCount === 0 &&
+                        styles.actionButtonPressed,
+                      queuableCount === 0 &&
+                        queuingCount === 0 &&
+                        !allQueued &&
+                        styles.actionButtonDisabled,
                     ]}
                     onPress={() => handleAddAllToQueue(item)}
                     disabled={queuableCount === 0 || queuingCount > 0}
@@ -818,9 +794,7 @@ export default function GenerateScreen() {
       <View style={styles.inputContainer}>
         <TextInput
           style={styles.input}
-          placeholder={
-            hasQueue ? "Adjust the vibe..." : "Describe a vibe..."
-          }
+          placeholder={hasQueue ? "Adjust the vibe..." : "Describe a vibe..."}
           placeholderTextColor={theme.textMuted}
           value={input}
           onChangeText={setInput}
