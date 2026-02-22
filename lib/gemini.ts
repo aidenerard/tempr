@@ -57,6 +57,7 @@ function extractJson(raw: string): string | null {
 export async function generateQueueSuggestions(
   prompt: string,
   likedTracks: SpotifyTrack[],
+  imageBase64?: string,
 ): Promise<QueueSuggestion> {
   const trackContext = (likedTracks ?? [])
     .slice(0, 200)
@@ -94,17 +95,25 @@ CRITICAL RULES:
 - You must ONLY pick songs that appear in the user's liked songs list. Do NOT suggest any song that is not in the list.
 - Output ONLY the JSON object, nothing else.`;
 
-  const userMessage = `Mood/vibe: "${prompt}"
+  const textMessage = prompt
+    ? `Mood/vibe: "${prompt}"\n\nUser's top tracks: ${trackContext}\n\nGenerate a queue that matches this vibe. Reply with ONLY the JSON object.`
+    : `Analyze the mood/vibe of the attached image.\n\nGenerate a queue that matches the mood of this image. Reply with ONLY the JSON object.
 
 User's liked songs: ${trackContext}
 
 Generate a queue from ONLY the liked songs above that matches this vibe. Reply with ONLY the JSON object.`;
+  const contents = imageBase64
+    ? [
+        { inlineData: { mimeType: "image/jpeg" as const, data: imageBase64 } },
+        { text: textMessage },
+      ]
+    : textMessage;
 
   const maxAttempts = 2;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: userMessage,
+      contents,
       config: {
         systemInstruction: systemPrompt,
         responseMimeType: "application/json",
@@ -127,9 +136,7 @@ Generate a queue from ONLY the liked songs above that matches this vibe. Reply w
     const jsonStr = extractJson(raw);
     if (jsonStr) {
       try {
-        const sanitized = jsonStr
-          .replace(/,\s*}/g, "}")
-          .replace(/,\s*]/g, "]");
+        const sanitized = jsonStr.replace(/,\s*}/g, "}").replace(/,\s*]/g, "]");
         return JSON.parse(sanitized) as QueueSuggestion;
       } catch (e) {
         console.log("[Gemini] extracted parse failed:", (e as Error).message);
@@ -224,7 +231,9 @@ Evaluate the queue against the adjusted vibe, remove the ${removeCount} worst-fi
             .replace(/,\s*}/g, "}")
             .replace(/,\s*]/g, "]");
           return JSON.parse(sanitized) as QueueAdjustment;
-        } catch { /* retry */ }
+        } catch {
+          /* retry */
+        }
       }
     }
   }

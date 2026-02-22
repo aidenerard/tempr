@@ -1,4 +1,11 @@
-import { StyleSheet, ScrollView, Pressable, Image, Alert } from "react-native";
+import {
+  StyleSheet,
+  ScrollView,
+  Pressable,
+  Image,
+  Alert,
+  Dimensions,
+} from "react-native";
 import { Text, View } from "@/components/Themed";
 import { useState, useCallback } from "react";
 import { FontAwesome } from "@expo/vector-icons";
@@ -7,20 +14,18 @@ import { useFocusEffect } from "expo-router";
 import { theme } from "@/constants/Colors";
 import { loadQueues, deleteQueue, type SavedQueue } from "@/lib/queueStorage";
 
-function timeAgo(timestamp: number): string {
-  const seconds = Math.floor((Date.now() - timestamp) / 1000);
-  if (seconds < 60) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  const weeks = Math.floor(days / 7);
-  return `${weeks}w ago`;
+const SCREEN_WIDTH = Dimensions.get("window").width;
+
+function formatDate(timestamp: number): string {
+  const date = new Date(timestamp);
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
-export default function LibraryScreen() {
+export default function MemoriesScreen() {
   const insets = useSafeAreaInsets();
   const [queues, setQueues] = useState<SavedQueue[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -33,8 +38,8 @@ export default function LibraryScreen() {
 
   const handleDelete = (queue: SavedQueue) => {
     Alert.alert(
-      "Delete Queue",
-      `Remove "${queue.prompt}" from your library?`,
+      "Delete Memory",
+      `Remove "${queue.title || queue.prompt}" from your memories?`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -61,14 +66,14 @@ export default function LibraryScreen() {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.headerTitle}>Library</Text>
+        <Text style={styles.headerTitle}>Memories</Text>
         <View style={styles.emptyState}>
           <View style={styles.emptyIconWrap}>
-            <FontAwesome name="bookmark-o" size={36} color={theme.primary} />
+            <FontAwesome name="heart-o" size={36} color={theme.primary} />
           </View>
-          <Text style={styles.emptyTitle}>No saved queues yet</Text>
+          <Text style={styles.emptyTitle}>No memories yet</Text>
           <Text style={styles.emptySubtitle}>
-            Generate a queue and tap "Save to Library" to keep it here.
+            Generate a queue and save it to capture the moment.
           </Text>
         </View>
       </ScrollView>
@@ -81,56 +86,84 @@ export default function LibraryScreen() {
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
     >
-      <Text style={styles.headerTitle}>Library</Text>
+      <Text style={styles.headerTitle}>Memories</Text>
       <Text style={styles.subtitle}>
-        {queues.length} saved queue{queues.length !== 1 ? "s" : ""}
+        {queues.length} {queues.length === 1 ? "memory" : "memories"}
       </Text>
 
       {queues.map((queue) => {
         const isExpanded = expandedId === queue.id;
+        const displayTitle = queue.title || queue.prompt;
         return (
           <View style={styles.card} key={queue.id}>
             <Pressable
-              style={({ pressed }) => [
-                styles.cardHeader,
-                pressed && styles.cardHeaderPressed,
-              ]}
+              style={({ pressed }) => [pressed && styles.cardPressed]}
               onPress={() => toggleExpand(queue.id)}
             >
-              <View style={styles.cardHeaderLeft}>
-                <Text style={styles.cardPrompt} numberOfLines={1}>
-                  {queue.prompt}
+              {queue.coverImage ? (
+                <Image
+                  source={{ uri: queue.coverImage }}
+                  style={styles.cardCover}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.cardCoverPlaceholder}>
+                  <FontAwesome
+                    name="music"
+                    size={28}
+                    color={theme.primaryBorder}
+                  />
+                </View>
+              )}
+              <View style={styles.cardBody}>
+                <View style={styles.cardTitleRow}>
+                  <Text style={styles.cardTitle} numberOfLines={2}>
+                    {displayTitle}
+                  </Text>
+                  <Pressable
+                    onPress={() => handleDelete(queue)}
+                    hitSlop={12}
+                    style={({ pressed }) => [
+                      styles.deleteButton,
+                      pressed && styles.deleteButtonPressed,
+                    ]}
+                  >
+                    <FontAwesome
+                      name="trash-o"
+                      size={14}
+                      color={theme.danger}
+                    />
+                  </Pressable>
+                </View>
+                <Text style={styles.cardDate}>
+                  {formatDate(queue.savedAt)}
                 </Text>
                 <View style={styles.cardMeta}>
+                  <FontAwesome
+                    name="music"
+                    size={10}
+                    color={theme.textMuted}
+                  />
                   <Text style={styles.cardMetaText}>
                     {queue.songs.length} tracks
                   </Text>
-                  <Text style={styles.cardMetaDot}>·</Text>
-                  <Text style={styles.cardMetaText}>
-                    {timeAgo(queue.savedAt)}
-                  </Text>
+                  {queue.moodLine ? (
+                    <>
+                      <Text style={styles.cardMetaDot}>·</Text>
+                      <Text
+                        style={styles.cardMetaText}
+                        numberOfLines={1}
+                      >
+                        {queue.moodLine}
+                      </Text>
+                    </>
+                  ) : null}
                 </View>
-                {queue.moodLine ? (
-                  <Text style={styles.cardMoodLine} numberOfLines={1}>
-                    {queue.moodLine}
-                  </Text>
-                ) : null}
-              </View>
-              <View style={styles.cardActions}>
-                <Pressable
-                  onPress={() => handleDelete(queue)}
-                  hitSlop={12}
-                  style={({ pressed }) => [
-                    styles.deleteButton,
-                    pressed && styles.deleteButtonPressed,
-                  ]}
-                >
-                  <FontAwesome name="trash-o" size={16} color={theme.danger} />
-                </Pressable>
                 <FontAwesome
                   name={isExpanded ? "chevron-up" : "chevron-down"}
-                  size={12}
+                  size={10}
                   color={theme.textMuted}
+                  style={styles.chevron}
                 />
               </View>
             </Pressable>
@@ -234,36 +267,54 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: theme.surface,
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: theme.surfaceBorder,
-    marginBottom: 12,
+    marginBottom: 16,
     overflow: "hidden",
   },
-  cardHeader: {
-    flexDirection: "row",
+  cardPressed: {
+    opacity: 0.85,
+  },
+  cardCover: {
+    width: "100%",
+    height: 160,
+  },
+  cardCoverPlaceholder: {
+    width: "100%",
+    height: 100,
+    backgroundColor: theme.primaryMuted,
     alignItems: "center",
+    justifyContent: "center",
+  },
+  cardBody: {
     padding: 16,
     backgroundColor: "transparent",
   },
-  cardHeaderPressed: {
-    opacity: 0.7,
-  },
-  cardHeaderLeft: {
-    flex: 1,
-    marginRight: 12,
+  cardTitleRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
     backgroundColor: "transparent",
+    gap: 12,
   },
-  cardPrompt: {
-    fontSize: 16,
+  cardTitle: {
+    fontSize: 18,
     fontWeight: "700",
     color: theme.text,
     letterSpacing: -0.2,
+    flex: 1,
+  },
+  cardDate: {
+    fontSize: 13,
+    color: theme.primary,
+    fontWeight: "600",
+    marginTop: 4,
   },
   cardMeta: {
     flexDirection: "row",
     alignItems: "center",
-    marginTop: 4,
+    marginTop: 8,
     gap: 6,
     backgroundColor: "transparent",
   },
@@ -271,20 +322,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: theme.textMuted,
     fontWeight: "500",
+    flexShrink: 1,
   },
   cardMetaDot: {
     fontSize: 12,
     color: theme.textMuted,
   },
-  cardMoodLine: {
-    fontSize: 12,
-    color: theme.textSecondary,
-    marginTop: 6,
-  },
-  cardActions: {
-    alignItems: "center",
-    gap: 12,
-    backgroundColor: "transparent",
+  chevron: {
+    alignSelf: "center",
+    marginTop: 12,
   },
   deleteButton: {
     width: 32,

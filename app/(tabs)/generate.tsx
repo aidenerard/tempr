@@ -25,7 +25,9 @@ import {
   Pressable,
   StyleSheet,
   TextInput,
+  Modal,
 } from "react-native";
+import { useFocusEffect } from "expo-router";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   Easing,
@@ -37,6 +39,23 @@ import Animated, {
   withSpring,
   withTiming,
 } from "react-native-reanimated";
+import * as ImagePicker from "expo-image-picker";
+import { useAuth } from "@/lib/AuthContext";
+import { theme } from "@/constants/Colors";
+import {
+  getTopTracks,
+  getTopArtists,
+  searchTracks,
+  addToQueue,
+  type SpotifyTrack,
+  type SpotifyArtist,
+} from "@/lib/spotify";
+import {
+  generateQueueSuggestions,
+  generateReplacementSong,
+  adjustQueueSuggestions,
+} from "@/lib/gemini";
+import { saveQueue, getSavedIds } from "@/lib/queueStorage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type SongEntry = {
@@ -53,6 +72,7 @@ type Message = {
   prompt?: string;
   moodLine?: string;
   saved?: boolean;
+  imageUri?: string;
 };
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
@@ -148,8 +168,52 @@ export default function GenerateScreen() {
   >({});
 
   const likedTracksRef = useRef<SpotifyTrack[] | null>(null);
+  const [selectedImage, setSelectedImage] = useState<{
+    uri: string;
+    base64: string;
+  } | null>(null);
+
+  const [saveModalMsg, setSaveModalMsg] = useState<Message | null>(null);
+  const [saveTitle, setSaveTitle] = useState("");
+  const [saveCoverImage, setSaveCoverImage] = useState<string | null>(null);
 
   const hasQueue = messages.some((m) => m.songs && m.songs.length > 0);
+
+  useFocusEffect(
+    useCallback(() => {
+      getSavedIds().then((savedIds) => {
+        setMessages((prev) => {
+          let changed = false;
+          const updated = prev.map((m) => {
+            if (m.saved && !savedIds.has(m.id)) {
+              changed = true;
+              return { ...m, saved: false };
+            }
+            return m;
+          });
+          return changed ? updated : prev;
+        });
+      });
+    }, []),
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      getSavedIds().then((savedIds) => {
+        setMessages((prev) => {
+          let changed = false;
+          const updated = prev.map((m) => {
+            if (m.saved && !savedIds.has(m.id)) {
+              changed = true;
+              return { ...m, saved: false };
+            }
+            return m;
+          });
+          return changed ? updated : prev;
+        });
+      });
+    }, []),
+  );
 
   const updateThinking = useCallback((id: string, text: string) => {
     setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, text } : m)));
@@ -161,6 +225,20 @@ export default function GenerateScreen() {
     const likedTracks = await getLikedTracks(spotifyToken, 200);
     likedTracksRef.current = likedTracks;
     return { likedTracks };
+  };
+
+  const handlePickImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 0.7,
+      base64: true,
+    });
+    if (!result.canceled && result.assets[0]?.base64) {
+      setSelectedImage({
+        uri: result.assets[0].uri,
+        base64: result.assets[0].base64,
+      });
+    }
   };
 
   const fetchMissingArt = useCallback(
@@ -201,7 +279,8 @@ export default function GenerateScreen() {
 
   const handleGenerate = async () => {
     const prompt = input.trim();
-    if (!prompt || generating) return;
+    const imageData = selectedImage;
+    if ((!prompt && !imageData) || generating) return;
 
     if (!spotifyToken) {
       const errorMsg: Message = {
@@ -218,26 +297,35 @@ export default function GenerateScreen() {
     const userMsg: Message = {
       id: Date.now().toString(),
       role: "user",
-      text: prompt,
+      text: prompt || "Generate from this image",
+      imageUri: imageData?.uri,
     };
+    const displayPrompt = prompt || "image mood";
     const thinkingId = (Date.now() + 1).toString();
     const thinkingMsg: Message = {
       id: thinkingId,
       role: "assistant",
-      text: `Creating a queue for "${prompt}"...`,
+      text: `Creating a queue for "${displayPrompt}"...`,
     };
 
     setMessages((prev) => [...prev, userMsg, thinkingMsg]);
+    setSelectedImage(null);
     setGenerating(true);
 
     try {
       updateThinking(thinkingId, "Loading your liked songs...");
       const { likedTracks } = await ensureSpotifyData();
 
-      updateThinking(thinkingId, "Mapping the mood to audio features...");
+      updateThinking(
+        thinkingId,
+        imageData
+          ? "Analyzing the mood of your image..."
+          : "Mapping the mood to audio features...",
+      );
       const suggestions = await generateQueueSuggestions(
         prompt,
         likedTracks,
+        imageData?.base64,
       );
 
       updateThinking(thinkingId, "Picking the perfect tracks...");
@@ -260,7 +348,7 @@ export default function GenerateScreen() {
         role: "assistant",
         text: `${suggestions.reasoning}\n\n${moodLine}`,
         songs,
-        prompt,
+        prompt: displayPrompt,
         moodLine,
       };
 
@@ -395,6 +483,7 @@ export default function GenerateScreen() {
     setMessages([]);
     setQueuedSongs({});
     setInput("");
+    setSelectedImage(null);
     likedTracksRef.current = null;
   };
 
@@ -459,16 +548,41 @@ export default function GenerateScreen() {
 
   const handleSave = async (msg: Message) => {
     if (!msg.songs || !msg.prompt || msg.saved) return;
+    setSaveTitle(msg.prompt);
+    setSaveCoverImage(null);
+    setSaveModalMsg(msg);
+  };
+
+  const handlePickCoverImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 0.7,
+    });
+    if (!result.canceled && result.assets[0]) {
+      setSaveCoverImage(result.assets[0].uri);
+    }
+  };
+
+  const handleConfirmSave = async () => {
+    if (!saveModalMsg?.songs || !saveModalMsg.prompt) return;
     await saveQueue({
-      id: msg.id,
-      prompt: msg.prompt,
-      moodLine: msg.moodLine ?? "",
-      songs: msg.songs.map((s) => ({ name: s.name, albumArt: s.albumArt })),
+      id: saveModalMsg.id,
+      prompt: saveModalMsg.prompt,
+      moodLine: saveModalMsg.moodLine ?? "",
+      title: saveTitle.trim() || saveModalMsg.prompt,
+      coverImage: saveCoverImage ?? undefined,
+      songs: saveModalMsg.songs.map((s) => ({
+        name: s.name,
+        albumArt: s.albumArt,
+      })),
       savedAt: Date.now(),
     });
     setMessages((prev) =>
-      prev.map((m) => (m.id === msg.id ? { ...m, saved: true } : m)),
+      prev.map((m) =>
+        m.id === saveModalMsg.id ? { ...m, saved: true } : m,
+      ),
     );
+    setSaveModalMsg(null);
   };
 
   const handleRemoveSong = useCallback(
@@ -607,6 +721,13 @@ export default function GenerateScreen() {
     if (item.role === "user") {
       return (
         <View style={styles.userBubble}>
+          {item.imageUri && (
+            <Image
+              source={{ uri: item.imageUri }}
+              style={styles.userImage}
+              resizeMode="cover"
+            />
+          )}
           <Text style={styles.userText}>{item.text}</Text>
         </View>
       );
@@ -700,11 +821,11 @@ export default function GenerateScreen() {
                       item.saved && styles.actionButtonDone,
                       pressed && !item.saved && styles.actionButtonPressed,
                     ]}
-                    onPress={() => handleSave(item)}
+                    onPress={() => openSaveModal(item)}
                     disabled={item.saved}
                   >
                     <FontAwesome
-                      name={item.saved ? "check" : "bookmark-o"}
+                      name={item.saved ? "check" : "heart-o"}
                       size={14}
                       color={item.saved ? theme.success : theme.primary}
                     />
@@ -714,7 +835,7 @@ export default function GenerateScreen() {
                         item.saved && styles.actionButtonTextDone,
                       ]}
                     >
-                      {item.saved ? "Saved to Library" : "Save to Library"}
+                      {item.saved ? "Saved" : "Save to Memories"}
                     </Text>
                   </Pressable>
                 </View>
@@ -791,7 +912,34 @@ export default function GenerateScreen() {
         />
       )}
 
+      {selectedImage && (
+        <View style={styles.imagePreviewBar}>
+          <Image
+            source={{ uri: selectedImage.uri }}
+            style={styles.imagePreviewThumb}
+          />
+          <Pressable
+            style={styles.imagePreviewRemove}
+            onPress={() => setSelectedImage(null)}
+          >
+            <FontAwesome name="times" size={12} color="#fff" />
+          </Pressable>
+        </View>
+      )}
       <View style={styles.inputContainer}>
+        {!hasQueue && (
+          <Pressable
+            style={styles.imagePickerButton}
+            onPress={handlePickImage}
+            disabled={generating}
+          >
+            <FontAwesome
+              name="camera"
+              size={18}
+              color={generating ? theme.textMuted : theme.primary}
+            />
+          </Pressable>
+        )}
         <TextInput
           style={styles.input}
           placeholder={hasQueue ? "Adjust the vibe..." : "Describe a vibe..."}
@@ -806,10 +954,11 @@ export default function GenerateScreen() {
         <Pressable
           style={[
             styles.sendButton,
-            (!input.trim() || generating) && styles.sendButtonDisabled,
+            (!input.trim() && !selectedImage || generating) &&
+              styles.sendButtonDisabled,
           ]}
           onPress={handleSubmit}
-          disabled={!input.trim() || generating}
+          disabled={(!input.trim() && !selectedImage) || generating}
         >
           {generating ? (
             <ActivityIndicator color="#fff" size="small" />
@@ -818,6 +967,77 @@ export default function GenerateScreen() {
           )}
         </Pressable>
       </View>
+
+      <Modal
+        visible={!!saveModalMsg}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSaveModalMsg(null)}
+      >
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setSaveModalMsg(null)}
+        >
+          <Pressable style={styles.modalContent} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Save to Memories</Text>
+
+            <Text style={styles.modalLabel}>Title</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={saveTitle}
+              onChangeText={setSaveTitle}
+              placeholder="Name this memory..."
+              placeholderTextColor={theme.textMuted}
+              autoFocus
+            />
+
+            <Text style={styles.modalLabel}>Cover Image</Text>
+            <Pressable
+              style={styles.coverPickerButton}
+              onPress={handlePickCoverImage}
+            >
+              {saveCoverImage ? (
+                <Image
+                  source={{ uri: saveCoverImage }}
+                  style={styles.coverPreview}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.coverPlaceholder}>
+                  <FontAwesome
+                    name="camera"
+                    size={24}
+                    color={theme.textMuted}
+                  />
+                  <Text style={styles.coverPlaceholderText}>Add a photo</Text>
+                </View>
+              )}
+            </Pressable>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalCancelButton,
+                  pressed && { opacity: 0.7 },
+                ]}
+                onPress={() => setSaveModalMsg(null)}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalSaveButton,
+                  pressed && { opacity: 0.7 },
+                ]}
+                onPress={handleConfirmSave}
+              >
+                <FontAwesome name="heart" size={14} color="#fff" />
+                <Text style={styles.modalSaveText}>Save</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -1213,5 +1433,143 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "flex-end",
     paddingRight: 24,
+  },
+  imagePickerButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  imagePreviewBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: theme.bg,
+  },
+  imagePreviewThumb: {
+    width: 56,
+    height: 56,
+    borderRadius: 10,
+  },
+  imagePreviewRemove: {
+    position: "absolute",
+    top: 4,
+    left: 64,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  userImage: {
+    width: SCREEN_WIDTH * 0.6,
+    height: 160,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  modalContent: {
+    width: "100%",
+    backgroundColor: theme.surface,
+    borderRadius: 20,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: theme.text,
+    marginBottom: 20,
+    textAlign: "center",
+    letterSpacing: -0.3,
+  },
+  modalLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: theme.textSecondary,
+    marginBottom: 8,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  modalInput: {
+    backgroundColor: theme.bg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: theme.text,
+    marginBottom: 20,
+  },
+  coverPickerButton: {
+    marginBottom: 24,
+    borderRadius: 14,
+    overflow: "hidden",
+  },
+  coverPreview: {
+    width: "100%",
+    height: 160,
+    borderRadius: 14,
+  },
+  coverPlaceholder: {
+    height: 120,
+    backgroundColor: theme.bg,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  coverPlaceholderText: {
+    fontSize: 13,
+    color: theme.textMuted,
+    fontWeight: "500",
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  modalCancelButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: theme.bg,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalCancelText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: theme.textSecondary,
+  },
+  modalSaveButton: {
+    flex: 1,
+    flexDirection: "row",
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: theme.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  modalSaveText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#fff",
   },
 });
