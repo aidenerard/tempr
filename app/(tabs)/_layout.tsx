@@ -44,6 +44,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="calendar"
         options={{
+          href: null,
           title: "Calendar",
           tabBarIcon: ({ color }) => (
             <TabIcon name="calendar" color={color} />
