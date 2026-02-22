@@ -57,7 +57,8 @@ function extractJson(raw: string): string | null {
 export async function generateQueueSuggestions(
   prompt: string,
   topTracks: SpotifyTrack[],
-  topArtists: SpotifyArtist[]
+  topArtists: SpotifyArtist[],
+  imageBase64?: string,
 ): Promise<QueueSuggestion> {
   const trackContext = (topTracks ?? [])
     .slice(0, 50)
@@ -100,18 +101,22 @@ CRITICAL RULES:
 - All songs must be REAL tracks on Spotify.
 - Output ONLY the JSON object, nothing else.`;
 
-  const userMessage = `Mood/vibe: "${prompt}"
+  const textMessage = prompt
+    ? `Mood/vibe: "${prompt}"\n\nUser's top tracks: ${trackContext}\nUser's top artists: ${artistContext}\n\nGenerate a queue that matches this vibe. Reply with ONLY the JSON object.`
+    : `Analyze the mood/vibe of the attached image.\n\nUser's top tracks: ${trackContext}\nUser's top artists: ${artistContext}\n\nGenerate a queue that matches the mood of this image. Reply with ONLY the JSON object.`;
 
-User's top tracks: ${trackContext}
-User's top artists: ${artistContext}
-
-Generate a queue that matches this vibe. Reply with ONLY the JSON object.`;
+  const contents = imageBase64
+    ? [
+        { inlineData: { mimeType: "image/jpeg" as const, data: imageBase64 } },
+        { text: textMessage },
+      ]
+    : textMessage;
 
   const maxAttempts = 2;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
-      contents: userMessage,
+      contents,
       config: {
         systemInstruction: systemPrompt,
         responseMimeType: "application/json",

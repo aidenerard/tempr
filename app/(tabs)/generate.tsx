@@ -24,6 +24,7 @@ import Animated, {
   Extrapolation,
   Easing,
 } from "react-native-reanimated";
+import * as ImagePicker from "expo-image-picker";
 import { useAuth } from "@/lib/AuthContext";
 import { theme } from "@/constants/Colors";
 import {
@@ -55,6 +56,7 @@ type Message = {
   prompt?: string;
   moodLine?: string;
   saved?: boolean;
+  imageUri?: string;
 };
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
@@ -151,6 +153,10 @@ export default function GenerateScreen() {
 
   const topTracksRef = useRef<SpotifyTrack[] | null>(null);
   const topArtistsRef = useRef<SpotifyArtist[] | null>(null);
+  const [selectedImage, setSelectedImage] = useState<{
+    uri: string;
+    base64: string;
+  } | null>(null);
 
   const hasQueue = messages.some((m) => m.songs && m.songs.length > 0);
 
@@ -179,6 +185,20 @@ export default function GenerateScreen() {
     topTracksRef.current = topTracks;
     topArtistsRef.current = topArtists;
     return { topTracks, topArtists };
+  };
+
+  const handlePickImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 0.7,
+      base64: true,
+    });
+    if (!result.canceled && result.assets[0]?.base64) {
+      setSelectedImage({
+        uri: result.assets[0].uri,
+        base64: result.assets[0].base64,
+      });
+    }
   };
 
   const fetchMissingArt = useCallback(
@@ -220,7 +240,8 @@ export default function GenerateScreen() {
 
   const handleGenerate = async () => {
     const prompt = input.trim();
-    if (!prompt || generating) return;
+    const imageData = selectedImage;
+    if ((!prompt && !imageData) || generating) return;
 
     if (!spotifyToken) {
       const errorMsg: Message = {
@@ -237,27 +258,36 @@ export default function GenerateScreen() {
     const userMsg: Message = {
       id: Date.now().toString(),
       role: "user",
-      text: prompt,
+      text: prompt || "Generate from this image",
+      imageUri: imageData?.uri,
     };
+    const displayPrompt = prompt || "image mood";
     const thinkingId = (Date.now() + 1).toString();
     const thinkingMsg: Message = {
       id: thinkingId,
       role: "assistant",
-      text: `Creating a queue for "${prompt}"...`,
+      text: `Creating a queue for "${displayPrompt}"...`,
     };
 
     setMessages((prev) => [...prev, userMsg, thinkingMsg]);
+    setSelectedImage(null);
     setGenerating(true);
 
     try {
       updateThinking(thinkingId, "Analyzing your listening history...");
       const { topTracks, topArtists } = await ensureSpotifyData();
 
-      updateThinking(thinkingId, "Mapping the mood to audio features...");
+      updateThinking(
+        thinkingId,
+        imageData
+          ? "Analyzing the mood of your image..."
+          : "Mapping the mood to audio features...",
+      );
       const suggestions = await generateQueueSuggestions(
         prompt,
         topTracks,
         topArtists,
+        imageData?.base64,
       );
 
       updateThinking(thinkingId, "Picking the perfect tracks...");
@@ -282,7 +312,7 @@ export default function GenerateScreen() {
         role: "assistant",
         text: `${suggestions.reasoning}\n\n${moodLine}`,
         songs,
-        prompt,
+        prompt: displayPrompt,
         moodLine,
       };
 
@@ -418,6 +448,7 @@ export default function GenerateScreen() {
     setMessages([]);
     setQueuedSongs({});
     setInput("");
+    setSelectedImage(null);
     topTracksRef.current = null;
     topArtistsRef.current = null;
   };
@@ -604,6 +635,13 @@ export default function GenerateScreen() {
     if (item.role === "user") {
       return (
         <View style={styles.userBubble}>
+          {item.imageUri && (
+            <Image
+              source={{ uri: item.imageUri }}
+              style={styles.userImage}
+              resizeMode="cover"
+            />
+          )}
           <Text style={styles.userText}>{item.text}</Text>
         </View>
       );
@@ -734,7 +772,34 @@ export default function GenerateScreen() {
         />
       )}
 
+      {selectedImage && (
+        <View style={styles.imagePreviewBar}>
+          <Image
+            source={{ uri: selectedImage.uri }}
+            style={styles.imagePreviewThumb}
+          />
+          <Pressable
+            style={styles.imagePreviewRemove}
+            onPress={() => setSelectedImage(null)}
+          >
+            <FontAwesome name="times" size={12} color="#fff" />
+          </Pressable>
+        </View>
+      )}
       <View style={styles.inputContainer}>
+        {!hasQueue && (
+          <Pressable
+            style={styles.imagePickerButton}
+            onPress={handlePickImage}
+            disabled={generating}
+          >
+            <FontAwesome
+              name="camera"
+              size={18}
+              color={generating ? theme.textMuted : theme.primary}
+            />
+          </Pressable>
+        )}
         <TextInput
           style={styles.input}
           placeholder={
@@ -751,10 +816,11 @@ export default function GenerateScreen() {
         <Pressable
           style={[
             styles.sendButton,
-            (!input.trim() || generating) && styles.sendButtonDisabled,
+            (!input.trim() && !selectedImage || generating) &&
+              styles.sendButtonDisabled,
           ]}
           onPress={handleSubmit}
-          disabled={!input.trim() || generating}
+          disabled={(!input.trim() && !selectedImage) || generating}
         >
           {generating ? (
             <ActivityIndicator color="#fff" size="small" />
@@ -1149,5 +1215,41 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "flex-end",
     paddingRight: 24,
+  },
+  imagePickerButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  imagePreviewBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: theme.bg,
+  },
+  imagePreviewThumb: {
+    width: 56,
+    height: 56,
+    borderRadius: 10,
+  },
+  imagePreviewRemove: {
+    position: "absolute",
+    top: 4,
+    left: 64,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  userImage: {
+    width: SCREEN_WIDTH * 0.6,
+    height: 160,
+    borderRadius: 12,
+    marginBottom: 8,
   },
 });
