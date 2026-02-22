@@ -45,7 +45,16 @@ npm install
 npx expo start
 ```
 
-Scan the QR code with Expo Go (iOS/Android) or press `i` for iOS simulator / `a` for Android emulator.
+## Run on your phone (Expo Go)
+1. Download Expo Go:
+- iOS: App Store → search “Expo Go”
+- Android: Google Play → search “Expo Go”
+2. After running npx expo start, Expo will open a dev server page with a QR code.
+3. Open Expo Go on your phone and scan the QR code:
+- iOS: use the Camera app to scan → tap the link → opens in Expo Go
+- Android: use the Scan QR Code option inside Expo Go
+4. The app will load on your device and hot-reload as you edit code.
+- You can also press i for iOS simulator or a for Android emulator if you have them installed.
 
 ## Project Structure
 
