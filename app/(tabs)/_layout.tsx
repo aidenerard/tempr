@@ -42,15 +42,6 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="blend"
-        options={{
-          title: "Blend",
-          tabBarIcon: ({ color }) => (
-            <TabIcon name="dot-circle-o" color={color} />
-          ),
-        }}
-      />
-      <Tabs.Screen
         name="library"
         options={{
           title: "Library",

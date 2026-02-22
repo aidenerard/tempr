@@ -173,8 +173,8 @@ export default function GenerateScreen() {
       };
     }
     const [topTracks, topArtists] = await Promise.all([
-      getTopTracks(spotifyToken, 20),
-      getTopArtists(spotifyToken, 15),
+      getTopTracks(spotifyToken, 50),
+      getTopArtists(spotifyToken, 30),
     ]);
     topTracksRef.current = topTracks;
     topArtistsRef.current = topArtists;
@@ -266,7 +266,6 @@ export default function GenerateScreen() {
 
       const allSongNames = [
         ...(suggestions.familiar ?? []),
-        ...(suggestions.discoveries ?? []),
       ];
       const songs: SongEntry[] = allSongNames.map((n) => ({
         name: n,
@@ -487,30 +486,27 @@ export default function GenerateScreen() {
       if (!prompt) return;
 
       try {
+        const removedLower = songName.toLowerCase();
+        const excludeSet = new Set([
+          removedLower,
+          ...remainingSongNames.map((n) => n.toLowerCase()),
+        ]);
+        const topTrackNames = (topTracksRef.current ?? [])
+          .map((t) => `${t.name} - ${t.artists[0]?.name ?? "Unknown"}`)
+          .filter((n) => !excludeSet.has(n.toLowerCase()));
         const newSongName = await generateReplacementSong(
           remainingSongNames,
           prompt,
+          topTrackNames,
         );
 
-        let albumArt: string | undefined;
-        let uri: string | undefined;
+        if (newSongName.toLowerCase() === removedLower) return;
 
-        if (spotifyToken) {
-          try {
-            const results = await searchTracks(
-              spotifyToken,
-              newSongName,
-              1,
-            );
-            if (results[0]) {
-              albumArt =
-                results[0].album.images[
-                  results[0].album.images.length - 1
-                ]?.url;
-              uri = results[0].uri;
-            }
-          } catch {}
-        }
+        const cachedTracks = topTracksRef.current ?? [];
+        const artLookup = buildArtLookup(cachedTracks);
+        const uriLookup = buildUriLookup(cachedTracks);
+        const albumArt = matchAlbumArt(newSongName, artLookup);
+        const uri = matchTrackUri(newSongName, uriLookup);
 
         setMessages((prev) =>
           prev.map((m) => {
