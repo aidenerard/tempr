@@ -7,11 +7,23 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Dimensions,
 } from "react-native";
 import { Text, View } from "@/components/Themed";
 import { useState, useRef, useCallback } from "react";
 import { FontAwesome } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  withSpring,
+  runOnJS,
+  interpolate,
+  Extrapolation,
+  Easing,
+} from "react-native-reanimated";
 import { useAuth } from "@/lib/AuthContext";
 import { theme } from "@/constants/Colors";
 import {
@@ -20,8 +32,13 @@ import {
   searchTracks,
   addToQueue,
   type SpotifyTrack,
+  type SpotifyArtist,
 } from "@/lib/spotify";
-import { generateQueueSuggestions } from "@/lib/gemini";
+import {
+  generateQueueSuggestions,
+  generateReplacementSong,
+  adjustQueueSuggestions,
+} from "@/lib/gemini";
 import { saveQueue } from "@/lib/queueStorage";
 
 type SongEntry = {
@@ -40,12 +57,86 @@ type Message = {
   saved?: boolean;
 };
 
-const THINKING_MESSAGES = [
-  (prompt: string) => `Creating a queue for "${prompt}"...`,
-  () => "Analyzing your listening history...",
-  () => "Mapping the mood to audio features...",
-  () => "Picking the perfect tracks...",
-];
+const SCREEN_WIDTH = Dimensions.get("window").width;
+const SWIPE_THRESHOLD = -SCREEN_WIDTH * 0.35;
+
+function SwipeableTrackRow({
+  children,
+  onRemove,
+}: {
+  children: React.ReactNode;
+  onRemove: () => void;
+}) {
+  const translateX = useSharedValue(0);
+  const rowHeight = useSharedValue(0);
+  const removing = useSharedValue(false);
+  const measured = useRef(false);
+
+  const panGesture = Gesture.Pan()
+    .activeOffsetX(-10)
+    .failOffsetY([-15, 15])
+    .onUpdate((e) => {
+      if (removing.value) return;
+      translateX.value = Math.min(0, e.translationX);
+    })
+    .onEnd(() => {
+      if (removing.value) return;
+      if (translateX.value < SWIPE_THRESHOLD) {
+        removing.value = true;
+        translateX.value = withTiming(
+          -SCREEN_WIDTH,
+          { duration: 250, easing: Easing.out(Easing.cubic) },
+          (done) => {
+            if (!done) return;
+            rowHeight.value = withTiming(0, { duration: 300 }, (done2) => {
+              if (done2) runOnJS(onRemove)();
+            });
+          },
+        );
+      } else {
+        translateX.value = withSpring(0, { damping: 20, stiffness: 200 });
+      }
+    });
+
+  const slideStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  const wrapperStyle = useAnimatedStyle(() => {
+    if (!removing.value) return {};
+    return { height: rowHeight.value, overflow: "hidden" as const };
+  });
+
+  const bgStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(
+      translateX.value,
+      [0, -80],
+      [0, 1],
+      Extrapolation.CLAMP,
+    ),
+  }));
+
+  return (
+    <Animated.View
+      style={wrapperStyle}
+      onLayout={(e) => {
+        if (!measured.current) {
+          measured.current = true;
+          rowHeight.value = e.nativeEvent.layout.height;
+        }
+      }}
+    >
+      <Animated.View style={[styles.deleteBackground, bgStyle]}>
+        <FontAwesome name="trash" size={18} color="#fff" />
+      </Animated.View>
+      <GestureDetector gesture={panGesture}>
+        <Animated.View style={[{ backgroundColor: theme.surface }, slideStyle]}>
+          {children}
+        </Animated.View>
+      </GestureDetector>
+    </Animated.View>
+  );
+}
 
 export default function GenerateScreen() {
   const { spotifyToken } = useAuth();
@@ -54,18 +145,45 @@ export default function GenerateScreen() {
   const [input, setInput] = useState("");
   const [generating, setGenerating] = useState(false);
   const flatListRef = useRef<FlatList>(null);
-  const [queuedSongs, setQueuedSongs] = useState<Record<string, "queuing" | "queued" | "error">>({});
+  const [queuedSongs, setQueuedSongs] = useState<
+    Record<string, "queuing" | "queued" | "error">
+  >({});
+
+  const topTracksRef = useRef<SpotifyTrack[] | null>(null);
+  const topArtistsRef = useRef<SpotifyArtist[] | null>(null);
+
+  const hasQueue = messages.some((m) => m.songs && m.songs.length > 0);
 
   const updateThinking = useCallback((id: string, text: string) => {
     setMessages((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, text } : m))
+      prev.map((m) => (m.id === id ? { ...m, text } : m)),
     );
   }, []);
+
+  const ensureSpotifyData = async () => {
+    if (!spotifyToken)
+      return {
+        topTracks: [] as SpotifyTrack[],
+        topArtists: [] as SpotifyArtist[],
+      };
+    if (topTracksRef.current && topArtistsRef.current) {
+      return {
+        topTracks: topTracksRef.current,
+        topArtists: topArtistsRef.current,
+      };
+    }
+    const [topTracks, topArtists] = await Promise.all([
+      getTopTracks(spotifyToken, 20),
+      getTopArtists(spotifyToken, 15),
+    ]);
+    topTracksRef.current = topTracks;
+    topArtistsRef.current = topArtists;
+    return { topTracks, topArtists };
+  };
 
   const fetchMissingArt = useCallback(
     async (msgId: string, songs: SongEntry[], token: string) => {
       const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
       await wait(10000);
 
       for (let i = 0; i < songs.length; i++) {
@@ -80,7 +198,11 @@ export default function GenerateScreen() {
               prev.map((m) => {
                 if (m.id !== msgId || !m.songs) return m;
                 const updated = [...m.songs];
-                updated[i] = { ...updated[i], albumArt: art, uri: match.uri };
+                updated[i] = {
+                  ...updated[i],
+                  albumArt: art,
+                  uri: match.uri,
+                };
                 return { ...m, songs: updated };
               }),
             );
@@ -117,33 +239,28 @@ export default function GenerateScreen() {
       role: "user",
       text: prompt,
     };
-
     const thinkingId = (Date.now() + 1).toString();
     const thinkingMsg: Message = {
       id: thinkingId,
       role: "assistant",
-      text: THINKING_MESSAGES[0](prompt),
+      text: `Creating a queue for "${prompt}"...`,
     };
 
     setMessages((prev) => [...prev, userMsg, thinkingMsg]);
     setGenerating(true);
 
     try {
-      updateThinking(thinkingId, THINKING_MESSAGES[1]());
+      updateThinking(thinkingId, "Analyzing your listening history...");
+      const { topTracks, topArtists } = await ensureSpotifyData();
 
-      const [topTracks, topArtists] = await Promise.all([
-        getTopTracks(spotifyToken, 20),
-        getTopArtists(spotifyToken, 15),
-      ]);
-
-      updateThinking(thinkingId, THINKING_MESSAGES[2]());
-
+      updateThinking(thinkingId, "Mapping the mood to audio features...");
       const suggestions = await generateQueueSuggestions(
         prompt,
         topTracks,
-        topArtists
+        topArtists,
       );
 
+      updateThinking(thinkingId, "Picking the perfect tracks...");
       const artLookup = buildArtLookup(topTracks);
       const uriLookup = buildUriLookup(topTracks);
 
@@ -191,7 +308,126 @@ export default function GenerateScreen() {
     }
   };
 
-  const handleAddToQueue = async (song: SongEntry, index: number, msgId: string) => {
+  const handleAdjust = async () => {
+    const adjustment = input.trim();
+    if (!adjustment || generating) return;
+
+    const latestQueue = [...messages]
+      .reverse()
+      .find((m) => m.songs && m.songs.length > 0);
+    if (!latestQueue?.songs || !latestQueue.prompt) return;
+
+    if (!spotifyToken) {
+      const errorMsg: Message = {
+        id: Date.now().toString(),
+        role: "assistant",
+        text: "Spotify isn't connected. Head to Profile and reconnect.",
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+      return;
+    }
+
+    setInput("");
+
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      text: adjustment,
+    };
+    const thinkingId = (Date.now() + 1).toString();
+    const thinkingMsg: Message = {
+      id: thinkingId,
+      role: "assistant",
+      text: `Adjusting queue: "${adjustment}"...`,
+    };
+
+    setMessages((prev) => [...prev, userMsg, thinkingMsg]);
+    setGenerating(true);
+
+    try {
+      updateThinking(thinkingId, "Re-evaluating song fit...");
+      const { topTracks, topArtists } = await ensureSpotifyData();
+      const currentSongNames = latestQueue.songs.map((s) => s.name);
+
+      updateThinking(thinkingId, "Finding better matches...");
+      const result = await adjustQueueSuggestions(
+        currentSongNames,
+        latestQueue.prompt,
+        adjustment,
+        topTracks,
+        topArtists,
+      );
+
+      const removeSet = new Set(result.remove.map((r) => r.toLowerCase()));
+      const keptSongs = latestQueue.songs.filter(
+        (s) => !removeSet.has(s.name.toLowerCase()),
+      );
+
+      const artLookup = buildArtLookup(topTracks);
+      const uriLookup = buildUriLookup(topTracks);
+      const newSongs: SongEntry[] = result.additions.map((n) => ({
+        name: n,
+        albumArt: matchAlbumArt(n, artLookup),
+        uri: matchTrackUri(n, uriLookup),
+      }));
+
+      const combinedSongs = [...keptSongs, ...newSongs];
+      const updatedPrompt = `${latestQueue.prompt} → ${adjustment}`;
+      const af = result.audioFeatures;
+      const moodLine = formatMoodSummary(af);
+
+      const msgId = (Date.now() + 2).toString();
+      const assistantMsg: Message = {
+        id: msgId,
+        role: "assistant",
+        text: `${result.reasoning}\n\n${moodLine}`,
+        songs: combinedSongs,
+        prompt: updatedPrompt,
+        moodLine,
+      };
+
+      setMessages((prev) => {
+        const filtered = prev.filter((m) => m.id !== thinkingId);
+        return [...filtered, assistantMsg];
+      });
+
+      fetchMissingArt(msgId, newSongs, spotifyToken);
+    } catch (err: any) {
+      const errorMsg: Message = {
+        id: (Date.now() + 2).toString(),
+        role: "assistant",
+        text: `Adjustment failed: ${err.message}`,
+      };
+      setMessages((prev) => {
+        const filtered = prev.filter((m) => m.id !== thinkingId);
+        return [...filtered, errorMsg];
+      });
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleSubmit = () => {
+    if (hasQueue) {
+      handleAdjust();
+    } else {
+      handleGenerate();
+    }
+  };
+
+  const handleNew = () => {
+    setMessages([]);
+    setQueuedSongs({});
+    setInput("");
+    topTracksRef.current = null;
+    topArtistsRef.current = null;
+  };
+
+  const handleAddToQueue = async (
+    song: SongEntry,
+    index: number,
+    msgId: string,
+  ) => {
     if (!spotifyToken || !song.uri) return;
     const key = `${msgId}-${index}`;
     if (queuedSongs[key]) return;
@@ -226,6 +462,70 @@ export default function GenerateScreen() {
     );
   };
 
+  const handleRemoveSong = useCallback(
+    async (msgId: string, songName: string) => {
+      let prompt = "";
+      let remainingSongNames: string[] = [];
+
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== msgId || !m.songs) return m;
+          prompt = m.prompt ?? "";
+          let removed = false;
+          const updatedSongs = m.songs.filter((s) => {
+            if (!removed && s.name === songName) {
+              removed = true;
+              return false;
+            }
+            return true;
+          });
+          remainingSongNames = updatedSongs.map((s) => s.name);
+          return { ...m, songs: updatedSongs };
+        }),
+      );
+
+      if (!prompt) return;
+
+      try {
+        const newSongName = await generateReplacementSong(
+          remainingSongNames,
+          prompt,
+        );
+
+        let albumArt: string | undefined;
+        let uri: string | undefined;
+
+        if (spotifyToken) {
+          try {
+            const results = await searchTracks(
+              spotifyToken,
+              newSongName,
+              1,
+            );
+            if (results[0]) {
+              albumArt =
+                results[0].album.images[
+                  results[0].album.images.length - 1
+                ]?.url;
+              uri = results[0].uri;
+            }
+          } catch {}
+        }
+
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== msgId || !m.songs) return m;
+            return {
+              ...m,
+              songs: [...m.songs, { name: newSongName, albumArt, uri }],
+            };
+          }),
+        );
+      } catch {}
+    },
+    [spotifyToken],
+  );
+
   const renderSong = (song: SongEntry, index: number, msgId: string) => {
     const parts = song.name.split(" - ");
     const title = parts[0]?.trim() ?? song.name;
@@ -234,55 +534,73 @@ export default function GenerateScreen() {
     const queueState = queuedSongs[key];
 
     return (
-      <View style={styles.trackRow} key={`${song.name}-${index}`}>
-        <Text style={styles.trackIndex}>{index + 1}</Text>
-        {song.albumArt ? (
-          <Image source={{ uri: song.albumArt }} style={styles.albumArt} />
-        ) : (
-          <View style={styles.albumPlaceholder}>
-            <FontAwesome name="music" size={14} color={theme.textMuted} />
-          </View>
-        )}
-        <View style={styles.trackInfo}>
-          <Text style={styles.trackName} numberOfLines={1}>
-            {title}
-          </Text>
-          {artist && (
-            <Text style={styles.trackArtist} numberOfLines={1}>
-              {artist}
-            </Text>
-          )}
-        </View>
-        <Pressable
-          style={({ pressed }) => [
-            styles.queueButton,
-            queueState === "queued" && styles.queueButtonDone,
-            queueState === "error" && styles.queueButtonError,
-            pressed && !queueState && styles.queueButtonPressed,
-            !song.uri && styles.queueButtonDisabled,
-          ]}
-          onPress={() => handleAddToQueue(song, index, msgId)}
-          disabled={!!queueState || !song.uri}
-        >
-          {queueState === "queuing" ? (
-            <ActivityIndicator size={12} color={theme.primary} />
-          ) : (
-            <FontAwesome
-              name={queueState === "queued" ? "check" : queueState === "error" ? "times" : "plus"}
-              size={12}
-              color={
-                queueState === "queued"
-                  ? theme.success
-                  : queueState === "error"
-                    ? theme.danger
-                    : song.uri
-                      ? theme.primary
-                      : theme.textMuted
-              }
+      <SwipeableTrackRow
+        key={`${song.name}-${index}`}
+        onRemove={() => handleRemoveSong(msgId, song.name)}
+      >
+        <View style={styles.trackRow}>
+          <Text style={styles.trackIndex}>{index + 1}</Text>
+          {song.albumArt ? (
+            <Image
+              source={{ uri: song.albumArt }}
+              style={styles.albumArt}
             />
+          ) : (
+            <View style={styles.albumPlaceholder}>
+              <FontAwesome
+                name="music"
+                size={14}
+                color={theme.textMuted}
+              />
+            </View>
           )}
-        </Pressable>
-      </View>
+          <View style={styles.trackInfo}>
+            <Text style={styles.trackName} numberOfLines={1}>
+              {title}
+            </Text>
+            {artist && (
+              <Text style={styles.trackArtist} numberOfLines={1}>
+                {artist}
+              </Text>
+            )}
+          </View>
+          <Pressable
+            style={({ pressed }) => [
+              styles.queueButton,
+              queueState === "queued" && styles.queueButtonDone,
+              queueState === "error" && styles.queueButtonError,
+              pressed && !queueState && styles.queueButtonPressed,
+              !song.uri && styles.queueButtonDisabled,
+            ]}
+            onPress={() => handleAddToQueue(song, index, msgId)}
+            disabled={!!queueState || !song.uri}
+          >
+            {queueState === "queuing" ? (
+              <ActivityIndicator size={12} color={theme.primary} />
+            ) : (
+              <FontAwesome
+                name={
+                  queueState === "queued"
+                    ? "check"
+                    : queueState === "error"
+                      ? "times"
+                      : "plus"
+                }
+                size={12}
+                color={
+                  queueState === "queued"
+                    ? theme.success
+                    : queueState === "error"
+                      ? theme.danger
+                      : song.uri
+                        ? theme.primary
+                        : theme.textMuted
+                }
+              />
+            )}
+          </Pressable>
+        </View>
+      </SwipeableTrackRow>
     );
   };
 
@@ -315,7 +633,11 @@ export default function GenerateScreen() {
               {item.songs.map((song, i) => renderSong(song, i, item.id))}
               <View style={styles.queueFooter}>
                 <View style={styles.queueStat}>
-                  <FontAwesome name="music" size={11} color={theme.primary} />
+                  <FontAwesome
+                    name="music"
+                    size={11}
+                    color={theme.primary}
+                  />
                   <Text style={styles.queueStatText}>
                     {item.songs.length} tracks
                   </Text>
@@ -359,6 +681,18 @@ export default function GenerateScreen() {
     >
       <View style={styles.headerBar}>
         <Text style={styles.headerTitle}>Generate</Text>
+        {messages.length > 0 && (
+          <Pressable
+            style={({ pressed }) => [
+              styles.newButton,
+              pressed && styles.newButtonPressed,
+            ]}
+            onPress={handleNew}
+          >
+            <FontAwesome name="plus" size={12} color={theme.primary} />
+            <Text style={styles.newButtonText}>New</Text>
+          </Pressable>
+        )}
       </View>
 
       {messages.length === 0 ? (
@@ -407,11 +741,13 @@ export default function GenerateScreen() {
       <View style={styles.inputContainer}>
         <TextInput
           style={styles.input}
-          placeholder="Describe a vibe..."
+          placeholder={
+            hasQueue ? "Adjust the vibe..." : "Describe a vibe..."
+          }
           placeholderTextColor={theme.textMuted}
           value={input}
           onChangeText={setInput}
-          onSubmitEditing={handleGenerate}
+          onSubmitEditing={handleSubmit}
           returnKeyType="send"
           editable={!generating}
           multiline
@@ -421,7 +757,7 @@ export default function GenerateScreen() {
             styles.sendButton,
             (!input.trim() || generating) && styles.sendButtonDisabled,
           ]}
-          onPress={handleGenerate}
+          onPress={handleSubmit}
           disabled={!input.trim() || generating}
         >
           {generating ? (
@@ -522,6 +858,9 @@ const styles = StyleSheet.create({
     backgroundColor: theme.bg,
   },
   headerBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 20,
     paddingVertical: 14,
     backgroundColor: "transparent",
@@ -531,6 +870,26 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: theme.text,
     letterSpacing: -0.5,
+  },
+  newButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: theme.primaryMuted,
+    borderWidth: 1,
+    borderColor: theme.primaryBorder,
+  },
+  newButtonPressed: {
+    opacity: 0.7,
+    transform: [{ scale: 0.96 }],
+  },
+  newButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: theme.primary,
   },
   emptyState: {
     flex: 1,
@@ -782,5 +1141,17 @@ const styles = StyleSheet.create({
   },
   queueButtonDisabled: {
     opacity: 0.3,
+  },
+  deleteBackground: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: theme.danger,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingRight: 24,
   },
 });
