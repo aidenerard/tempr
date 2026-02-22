@@ -12,7 +12,12 @@ import { FontAwesome } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
 import { theme } from "@/constants/Colors";
-import { loadQueues, deleteQueue, type SavedQueue } from "@/lib/queueStorage";
+import {
+  loadQueues,
+  loadLikes,
+  deleteQueue,
+  type SavedQueue,
+} from "@/lib/queueStorage";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 
@@ -28,11 +33,13 @@ function formatDate(timestamp: number): string {
 export default function MemoriesScreen() {
   const insets = useSafeAreaInsets();
   const [queues, setQueues] = useState<SavedQueue[]>([]);
+  const [likes, setLikes] = useState<SavedQueue | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
       loadQueues().then(setQueues);
+      loadLikes().then(setLikes);
     }, []),
   );
 
@@ -59,7 +66,7 @@ export default function MemoriesScreen() {
     setExpandedId((prev) => (prev === id ? null : id));
   };
 
-  if (queues.length === 0) {
+  if (queues.length === 0 && !likes) {
     return (
       <ScrollView
         style={[styles.container, { paddingTop: insets.top + 16 }]}
@@ -73,7 +80,7 @@ export default function MemoriesScreen() {
           </View>
           <Text style={styles.emptyTitle}>No memories yet</Text>
           <Text style={styles.emptySubtitle}>
-            Generate a queue and save it to capture the moment.
+            Generate a queue and save it, or swipe right on songs in Discover to like them.
           </Text>
         </View>
       </ScrollView>
@@ -90,6 +97,66 @@ export default function MemoriesScreen() {
       <Text style={styles.subtitle}>
         {queues.length} {queues.length === 1 ? "memory" : "memories"}
       </Text>
+
+      {likes && (() => {
+        const isExpanded = expandedId === likes.id;
+        return (
+          <View style={[styles.card, styles.likesCard]} key={likes.id}>
+            <Pressable
+              style={({ pressed }) => [pressed && styles.cardPressed]}
+              onPress={() => toggleExpand(likes.id)}
+            >
+              <View style={styles.likesCardHeader}>
+                <View style={styles.likesIconWrap}>
+                  <FontAwesome name="heart" size={22} color="#4ade80" />
+                </View>
+                <View style={{ flex: 1, backgroundColor: "transparent" }}>
+                  <Text style={styles.likesTitle}>Likes</Text>
+                  <View style={styles.cardMeta}>
+                    <FontAwesome name="music" size={10} color={theme.textMuted} />
+                    <Text style={styles.cardMetaText}>
+                      {likes.songs.length} {likes.songs.length === 1 ? "track" : "tracks"} liked from Discover
+                    </Text>
+                  </View>
+                  <FontAwesome
+                    name={isExpanded ? "chevron-up" : "chevron-down"}
+                    size={10}
+                    color={theme.textMuted}
+                    style={styles.chevron}
+                  />
+                </View>
+              </View>
+            </Pressable>
+            {isExpanded && (
+              <View style={styles.trackList}>
+                {likes.songs.map((song, i) => {
+                  const parts = song.name.split(" - ");
+                  const title = parts[0]?.trim() ?? song.name;
+                  const artist = parts[1]?.trim();
+                  return (
+                    <View style={styles.trackRow} key={`${song.name}-${i}`}>
+                      <Text style={styles.trackIndex}>{i + 1}</Text>
+                      {song.albumArt ? (
+                        <Image source={{ uri: song.albumArt }} style={styles.albumArt} />
+                      ) : (
+                        <View style={styles.albumPlaceholder}>
+                          <FontAwesome name="music" size={12} color={theme.textMuted} />
+                        </View>
+                      )}
+                      <View style={styles.trackInfo}>
+                        <Text style={styles.trackName} numberOfLines={1}>{title}</Text>
+                        {artist ? (
+                          <Text style={styles.trackArtist} numberOfLines={1}>{artist}</Text>
+                        ) : null}
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        );
+      })()}
 
       {queues.map((queue) => {
         const isExpanded = expandedId === queue.id;
@@ -272,6 +339,31 @@ const styles = StyleSheet.create({
     borderColor: theme.surfaceBorder,
     marginBottom: 16,
     overflow: "hidden",
+  },
+  likesCard: {
+    borderColor: "rgba(74, 222, 128, 0.3)",
+  },
+  likesCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+    gap: 14,
+    backgroundColor: "transparent",
+  },
+  likesIconWrap: {
+    width: 52,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: "rgba(74, 222, 128, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  likesTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: theme.text,
+    letterSpacing: -0.2,
   },
   cardPressed: {
     opacity: 0.85,

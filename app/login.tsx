@@ -24,7 +24,7 @@ export default function LoginScreen() {
           redirectTo,
           skipBrowserRedirect: true,
           scopes:
-            "user-read-email user-read-private streaming user-library-read user-top-read playlist-read-private",
+            "user-read-email user-read-private streaming user-library-read user-library-modify user-top-read playlist-read-private playlist-modify-public playlist-modify-private",
         },
       });
 

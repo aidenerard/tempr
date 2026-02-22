@@ -254,3 +254,89 @@ export function totalDurationMinutes(tracks: SpotifyTrack[]): number {
     const totalMs = tracks.reduce((sum, t) => sum + t.duration_ms, 0);
     return Math.round(totalMs / 60000);
 }
+
+export async function getOrCreateTemprLikesPlaylist(
+  token: string,
+): Promise<string> {
+  const me = await spotifyFetch("/me", token);
+  const userId: string = me.id;
+
+  // Search user's playlists for an existing "Tempr Likes" (up to 150)
+  let offset = 0;
+  while (offset < 150) {
+    const data = await spotifyFetch(
+      `/me/playlists?limit=50&offset=${offset}`,
+      token,
+    );
+    const items: any[] = data.items ?? [];
+    const found = items.find(
+      (p) => p.name === "Tempr Likes" && p.owner?.id === userId,
+    );
+    if (found) return found.id as string;
+    if (items.length < 50) break;
+    offset += 50;
+  }
+
+  // Not found — create it
+  const res = await fetch(`${SPOTIFY_BASE}/users/${userId}/playlists`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: "Tempr Likes",
+      public: false,
+      description: "Songs liked while discovering music in Tempr",
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(
+      err.error?.message || `Failed to create playlist: ${res.status}`,
+    );
+  }
+  const playlist = await res.json();
+  return playlist.id as string;
+}
+
+export async function addTrackToPlaylist(
+  token: string,
+  playlistId: string,
+  trackUri: string,
+): Promise<void> {
+  const res = await fetch(`${SPOTIFY_BASE}/playlists/${playlistId}/tracks`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ uris: [trackUri] }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(
+      err.error?.message || `Failed to add track to playlist: ${res.status}`,
+    );
+  }
+}
+
+export async function saveTrack(
+  token: string,
+  trackId: string,
+): Promise<void> {
+  const res = await fetch(`${SPOTIFY_BASE}/me/tracks`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ids: [trackId] }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(
+      err.error?.message || `Failed to save track: ${res.status}`,
+    );
+  }
+}

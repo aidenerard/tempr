@@ -1,4 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import Animated, {
+    Extrapolation,
+    interpolate,
+    runOnJS,
+    useAnimatedStyle,
+    useSharedValue,
+    withSpring,
+    withTiming,
+} from "react-native-reanimated";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import {
     View,
     Text,
@@ -12,9 +22,19 @@ import {
 import { WebView } from "react-native-webview";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useAuth } from "@/lib/AuthContext";
-import { getTrendingTracks, SpotifyTrack } from "@/lib/spotify";
+import {
+    getTrendingTracks,
+    getOrCreateTemprLikesPlaylist,
+    addTrackToPlaylist,
+    SpotifyTrack,
+} from "@/lib/spotify";
 import { findMusicVideo, YouTubeMatch } from "@/lib/youtube";
-import { loadPreviewPlaylist } from "@/lib/queueStorage";
+import {
+    addToLikes,
+    loadLikesPlaylistId,
+    saveLikesPlaylistId,
+    loadPreviewPlaylist,
+} from "@/lib/queueStorage";
 import { theme } from "@/constants/Colors";
 
 const WEB_ORIGIN = __DEV__ ? "https://app.local" : "https://yourdomain.com";
@@ -105,12 +125,18 @@ const VideoCard = React.memo(
          isNear,
          width,
          height,
+         spotifyToken,
+         onSwipedRight,
+         onSwipedLeft,
      }: {
         item: FeedItem;
         isActive: boolean;
         isNear: boolean;
         width: number;
         height: number;
+        spotifyToken: string | null;
+        onSwipedRight: () => void;
+        onSwipedLeft: () => void;
     }) => {
         const albumArt = item.track.album.images[0]?.url;
         const artist = item.track.artists[0]?.name ?? "";
@@ -134,8 +160,114 @@ const VideoCard = React.memo(
             wasActive.current = isActive;
         }, [isActive, item.match]);
 
+        // Tinder-style swipe gesture
+        const translateX = useSharedValue(0);
+        const SWIPE_THRESHOLD = 100;
+        const SWIPE_OUT = width * 1.5;
+
+        // Reset position when card leaves the visible area
+        useEffect(() => {
+            if (!isNear) {
+                translateX.value = 0;
+            }
+        }, [isNear]);
+
+        const handleLike = useCallback(async () => {
+            // Always save locally first
+            await addToLikes(item.track);
+
+            // Best-effort: sync to Spotify "Tempr Likes" playlist
+            if (!spotifyToken || !item.track.uri) return;
+            try {
+                let playlistId = await loadLikesPlaylistId();
+                if (!playlistId) {
+                    playlistId = await getOrCreateTemprLikesPlaylist(spotifyToken);
+                    await saveLikesPlaylistId(playlistId);
+                }
+                await addTrackToPlaylist(spotifyToken, playlistId, item.track.uri);
+            } catch (e) {
+                console.warn("[Discover] Spotify playlist sync failed:", e);
+            }
+        }, [spotifyToken, item.track]);
+
+        const panGesture = Gesture.Pan()
+            .activeOffsetX([-10, 10])
+            .failOffsetY([-20, 20])
+            .onUpdate((e) => {
+                translateX.value = e.translationX;
+            })
+            .onEnd((e) => {
+                if (e.translationX > SWIPE_THRESHOLD) {
+                    // Fly off right → SAVE
+                    runOnJS(handleLike)();
+                    translateX.value = withTiming(SWIPE_OUT, { duration: 350 }, (finished) => {
+                        if (finished) runOnJS(onSwipedRight)();
+                    });
+                } else if (e.translationX < -SWIPE_THRESHOLD) {
+                    // Fly off left → SKIP
+                    translateX.value = withTiming(-SWIPE_OUT, { duration: 350 }, (finished) => {
+                        if (finished) runOnJS(onSwipedLeft)();
+                    });
+                } else {
+                    // Snap back
+                    translateX.value = withSpring(0, { damping: 20, stiffness: 300 });
+                }
+            });
+
+        const cardStyle = useAnimatedStyle(() => {
+            const rotate = interpolate(
+                translateX.value,
+                [-width / 2, 0, width / 2],
+                [-14, 0, 14],
+                Extrapolation.CLAMP,
+            );
+            return {
+                transform: [
+                    { translateX: translateX.value },
+                    { rotate: `${rotate}deg` },
+                ],
+            };
+        });
+
+        const likeStyle = useAnimatedStyle(() => ({
+            opacity: interpolate(
+                translateX.value,
+                [20, SWIPE_THRESHOLD],
+                [0, 1],
+                Extrapolation.CLAMP,
+            ),
+        }));
+
+        const dislikeStyle = useAnimatedStyle(() => ({
+            opacity: interpolate(
+                translateX.value,
+                [-20, -SWIPE_THRESHOLD],
+                [0, 1],
+                Extrapolation.CLAMP,
+            ),
+        }));
+
+        const likeOverlayStyle = useAnimatedStyle(() => ({
+            opacity: interpolate(
+                translateX.value,
+                [0, SWIPE_THRESHOLD],
+                [0, 0.4],
+                Extrapolation.CLAMP,
+            ),
+        }));
+
+        const dislikeOverlayStyle = useAnimatedStyle(() => ({
+            opacity: interpolate(
+                translateX.value,
+                [-SWIPE_THRESHOLD, 0],
+                [0.4, 0],
+                Extrapolation.CLAMP,
+            ),
+        }));
+
         return (
-            <View style={[styles.card, { width, height }]}>
+            <GestureDetector gesture={panGesture}>
+            <Animated.View style={[styles.card, { width, height }, cardStyle]}>
                 {showVideo ? (
                     <View style={[styles.playerWrap, { width, height }]}>
                         <View
@@ -172,12 +304,33 @@ const VideoCard = React.memo(
 
                 <View style={styles.scrim} pointerEvents="none" />
 
+                {/* Color tint overlays */}
+                <Animated.View
+                    style={[StyleSheet.absoluteFill, styles.likeOverlay, likeOverlayStyle]}
+                    pointerEvents="none"
+                />
+                <Animated.View
+                    style={[StyleSheet.absoluteFill, styles.dislikeOverlay, dislikeOverlayStyle]}
+                    pointerEvents="none"
+                />
+
                 {isActive && item.matchLoading && (
                     <View style={styles.spinnerOverlay} pointerEvents="none">
                         <ActivityIndicator size="large" color={theme.primary} />
                         <Text style={styles.spinnerText}>Finding video…</Text>
                     </View>
                 )}
+
+                {/* Save badge — green heart */}
+                <Animated.View style={[styles.likeBadge, likeStyle]} pointerEvents="none">
+                    <Text style={styles.likeEmoji}>💚</Text>
+                    <Text style={styles.likeBadgeText}>SAVE</Text>
+                </Animated.View>
+                {/* Skip badge — red trash */}
+                <Animated.View style={[styles.dislikeBadge, dislikeStyle]} pointerEvents="none">
+                    <Text style={styles.dislikeEmoji}>🗑️</Text>
+                    <Text style={styles.dislikeBadgeText}>SKIP</Text>
+                </Animated.View>
 
                 <View style={styles.trackInfo}>
                     <Image source={{ uri: albumArt }} style={styles.thumbnail} />
@@ -190,7 +343,8 @@ const VideoCard = React.memo(
                         </Text>
                     </View>
                 </View>
-            </View>
+            </Animated.View>
+            </GestureDetector>
         );
     }
 );
@@ -219,6 +373,8 @@ export default function DiscoverScreen() {
     const [currentIndex, setCurrentIndex] = useState(0);
     const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
     const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 });
+    const flatListRef = useRef<FlatList>(null);
+    const activeItemsLenRef = useRef(0);
 
     useEffect(() => {
         if (!spotifyToken) return;
@@ -374,6 +530,20 @@ export default function DiscoverScreen() {
         setCurrentIndex(0);
     }
 
+    // Keep a ref to active items length so swipe handlers don't go stale
+    const activeItems = activeTab === "findMusic" ? feedItems : previewItems;
+    useEffect(() => {
+        activeItemsLenRef.current = activeItems.length;
+    }, [activeItems]);
+
+    const handleSwipe = useCallback((index: number) => {
+        const nextIndex = index + 1;
+        if (nextIndex < activeItemsLenRef.current) {
+            flatListRef.current?.scrollToIndex({ index: nextIndex, animated: true });
+            setCurrentIndex(nextIndex);
+        }
+    }, []);
+
     const onViewableItemsChanged = useCallback(
         ({ viewableItems }: { viewableItems: ViewToken[] }) => {
             if (viewableItems.length > 0 && viewableItems[0].index != null) {
@@ -400,8 +570,6 @@ export default function DiscoverScreen() {
         );
     }
 
-    const activeItems = activeTab === "findMusic" ? feedItems : previewItems;
-
     return (
         <View
             style={styles.container}
@@ -426,6 +594,7 @@ export default function DiscoverScreen() {
                         </View>
                     ) : (
                         <FlatList
+                            ref={flatListRef}
                             key={activeTab}
                             data={activeItems}
                             keyExtractor={(item) => item.track.id}
@@ -436,6 +605,9 @@ export default function DiscoverScreen() {
                                     isNear={Math.abs(index - currentIndex) <= 2}
                                     width={containerSize.width}
                                     height={containerSize.height}
+                                    spotifyToken={spotifyToken}
+                                    onSwipedRight={() => handleSwipe(index)}
+                                    onSwipedLeft={() => handleSwipe(index)}
                                 />
                             )}
                             pagingEnabled
@@ -608,5 +780,57 @@ const styles = StyleSheet.create({
         height: 2,
         backgroundColor: "#fff",
         borderRadius: 1,
+    },
+    likeOverlay: {
+        backgroundColor: "#22c55e",
+    },
+    dislikeOverlay: {
+        backgroundColor: "#ef4444",
+    },
+    likeBadge: {
+        position: "absolute",
+        top: 110,
+        left: 24,
+        alignItems: "center",
+        transform: [{ rotate: "-15deg" }],
+        borderWidth: 4,
+        borderColor: "#4ade80",
+        borderRadius: 10,
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+    },
+    likeEmoji: {
+        fontSize: 42,
+        lineHeight: 48,
+    },
+    likeBadgeText: {
+        color: "#4ade80",
+        fontSize: 22,
+        fontWeight: "900",
+        letterSpacing: 3,
+        marginTop: 2,
+    },
+    dislikeBadge: {
+        position: "absolute",
+        top: 110,
+        right: 24,
+        alignItems: "center",
+        transform: [{ rotate: "15deg" }],
+        borderWidth: 4,
+        borderColor: "#f87171",
+        borderRadius: 10,
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+    },
+    dislikeEmoji: {
+        fontSize: 42,
+        lineHeight: 48,
+    },
+    dislikeBadgeText: {
+        color: "#f87171",
+        fontSize: 22,
+        fontWeight: "900",
+        letterSpacing: 3,
+        marginTop: 2,
     },
 });
