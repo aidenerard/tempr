@@ -2,11 +2,42 @@ import type { AudioFeatureTargets } from "./gemini";
 
 const SPOTIFY_BASE = "https://api.spotify.com/v1";
 
+const DEFAULT_RETRY_AFTER_MS = 2000;
+const MAX_429_RETRIES = 2;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function spotifyRequest(
+  url: string,
+  token: string,
+  init: RequestInit = {},
+  retryCount = 0,
+): Promise<Response> {
+  const res = await fetch(url, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, ...init.headers },
+  });
+
+  if (res.status === 429 && retryCount < MAX_429_RETRIES) {
+    const retryAfterSec = res.headers.get("Retry-After");
+    const waitMs = retryAfterSec
+      ? Math.min(Number(retryAfterSec) * 1000, 15000)
+      : DEFAULT_RETRY_AFTER_MS;
+    console.warn(
+      `[Spotify] 429 rate limited, retrying after ${waitMs}ms (attempt ${retryCount + 1}/${MAX_429_RETRIES})`,
+    );
+    await sleep(waitMs);
+    return spotifyRequest(url, token, init, retryCount + 1);
+  }
+
+  return res;
+}
+
 async function spotifyFetch(endpoint: string, token: string): Promise<any> {
   const url = `${SPOTIFY_BASE}${endpoint}`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const res = await spotifyRequest(url, token);
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -24,6 +55,7 @@ export async function batchedSearch(
 ): Promise<SpotifyTrack[][]> {
   const results: SpotifyTrack[][] = [];
   for (let i = 0; i < queries.length; i += batchSize) {
+    if (i > 0) await sleep(350);
     const batch = queries.slice(i, i + batchSize);
     const batchResults = await Promise.all(
       batch.map((q) => searchTracks(token, q, 1).catch(() => [])),
@@ -160,23 +192,45 @@ export async function getTrendingTracks(
   return pool.sort(() => Math.random() - 0.5).slice(0, limit);
 }
 
+export type SpotifyDevice = {
+  id: string;
+  is_active: boolean;
+  name: string;
+  type: string;
+};
+
+export async function getAvailableDevices(
+  token: string,
+): Promise<SpotifyDevice[]> {
+  const url = `${SPOTIFY_BASE}/me/player/devices`;
+  const res = await spotifyRequest(url, token);
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      return [];
+    }
+    const err = await res.json().catch(() => ({}));
+    throw new Error(
+      err.error?.message || `Failed to get devices: ${res.status}`,
+    );
+  }
+  const data = await res.json();
+  return data.devices ?? [];
+}
+
 export async function addToQueue(
   token: string,
   trackUri: string,
+  deviceId?: string,
 ): Promise<void> {
-  const res = await fetch(
-    `${SPOTIFY_BASE}/me/player/queue?uri=${encodeURIComponent(trackUri)}`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    },
-  );
+  const params = new URLSearchParams({ uri: trackUri });
+  if (deviceId) params.set("device_id", deviceId);
+  const url = `${SPOTIFY_BASE}/me/player/queue?${params.toString()}`;
+  const res = await spotifyRequest(url, token, { method: "POST" });
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(
-      err.error?.message || `Failed to add to queue: ${res.status}`,
-    );
+    const msg = err.error?.message || `Failed to add to queue: ${res.status}`;
+    throw new Error(msg);
   }
 }
 
