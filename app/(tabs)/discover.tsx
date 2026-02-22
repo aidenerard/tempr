@@ -6,16 +6,17 @@ import {
     FlatList,
     ActivityIndicator,
     Image,
+    Pressable,
     ViewToken,
 } from "react-native";
 import { WebView } from "react-native-webview";
+import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useAuth } from "@/lib/AuthContext";
 import { getTrendingTracks, SpotifyTrack } from "@/lib/spotify";
 import { findMusicVideo, YouTubeMatch } from "@/lib/youtube";
+import { loadPreviewPlaylist } from "@/lib/queueStorage";
 import { theme } from "@/constants/Colors";
 
-// ---- FIX FOR 153: stable HTTPS origin even in dev ----
-// This does NOT need to resolve. It just needs to be a consistent https origin string.
 const WEB_ORIGIN = __DEV__ ? "https://app.local" : "https://yourdomain.com";
 
 function buildYouTubeHtml(videoId: string, origin: string, startSeconds: number): string {
@@ -63,7 +64,6 @@ function buildYouTubeHtml(videoId: string, origin: string, startSeconds: number)
             try { e.target.playVideo(); } catch(err) {}
           },
           onStateChange:function(e){
-            // Only unmute when RN has flagged this card as active
             if(e.data===1 && active){
               try { player.unMute(); player.setVolume(100); } catch(err) {}
             }
@@ -96,6 +96,8 @@ type FeedItem = {
     matchLoading: boolean;
 };
 
+type Tab = "findMusic" | "preview";
+
 const VideoCard = React.memo(
     ({
          item,
@@ -114,7 +116,6 @@ const VideoCard = React.memo(
         const artist = item.track.artists[0]?.name ?? "";
         const showVideo = item.match != null && isNear;
 
-        // 75% height, centered vertically — black bars top & bottom, sides still cropped
         const playerH = Math.round(height * 0.75);
         const playerW = Math.ceil(playerH * (16 / 9));
         const offsetX = -Math.floor((playerW - width) / 2);
@@ -148,7 +149,6 @@ const VideoCard = React.memo(
                         >
                             <WebView
                                 ref={webViewRef}
-                                // ---- FIX FOR 153: provide baseUrl + origin ----
                                 source={{
                                     html: buildYouTubeHtml(item.match!.videoId, WEB_ORIGIN, item.match!.startSeconds),
                                     baseUrl: WEB_ORIGIN,
@@ -197,13 +197,27 @@ const VideoCard = React.memo(
 
 export default function DiscoverScreen() {
     const { spotifyToken, refreshSpotifyToken, signOut } = useAuth();
+    const { tab: tabParam } = useLocalSearchParams<{ tab?: string }>();
+
+    const [activeTab, setActiveTab] = useState<Tab>("findMusic");
+    const [screenFocused, setScreenFocused] = useState(true);
+
+    // Find Music state
     const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
-    const [currentIndex, setCurrentIndex] = useState(0);
     const [initialLoading, setInitialLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+    const seenIds = useRef<Set<string>>(new Set());
 
+    // Preview state
+    const [previewItems, setPreviewItems] = useState<FeedItem[]>([]);
+    const [previewLoading, setPreviewLoading] = useState(false);
+    const [previewEmpty, setPreviewEmpty] = useState(false);
+    const previewTrackIds = useRef<string[]>([]);
+
+    // Shared
+    const [currentIndex, setCurrentIndex] = useState(0);
+    const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
     const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 });
 
     useEffect(() => {
@@ -211,16 +225,28 @@ export default function DiscoverScreen() {
         loadFeed(spotifyToken);
     }, [spotifyToken]);
 
+    // Reload preview whenever Discover tab comes into focus (catches new playlists from Generate)
+    useFocusEffect(
+        useCallback(() => {
+            setScreenFocused(true);
+            if (tabParam === "preview") {
+                setActiveTab("preview");
+                setCurrentIndex(0);
+            }
+            loadPreview();
+            return () => setScreenFocused(false);
+        }, [spotifyToken, tabParam])
+    );
+
     async function loadFeed(token: string) {
-        console.log("[Discover] loadFeed called, token length:", token?.length, "first10:", token?.slice(0, 10));
         try {
             setInitialLoading(true);
             setError(null);
+            seenIds.current = new Set();
 
-            console.log("[Discover] calling getTrendingTracks...");
-            const tracks = await getTrendingTracks(token, 10);
-            console.log("[Discover] getTrendingTracks returned", tracks.length, "tracks");
-            console.log("[Discover] tracks:", tracks.map((t) => `${t.name} - ${t.artists[0]?.name}`));
+            const raw = await getTrendingTracks(token, 20);
+            const tracks = raw.filter((t) => !seenIds.current.has(t.id)).slice(0, 10);
+            tracks.forEach((t) => seenIds.current.add(t.id));
 
             const items: FeedItem[] = tracks.map((track) => ({
                 track,
@@ -234,15 +260,13 @@ export default function DiscoverScreen() {
             tracks.forEach((track, index) => {
                 findMusicVideo(track, token)
                     .then((match) => {
-                        console.log(`[Discover] video match for "${track.name}":`, match?.videoId ?? "none");
                         setFeedItems((prev) => {
                             const next = [...prev];
                             next[index] = { ...next[index], match, matchLoading: false };
                             return next;
                         });
                     })
-                    .catch((err) => {
-                        console.warn(`[Discover] findMusicVideo failed for "${track.name}":`, err.message);
+                    .catch(() => {
                         setFeedItems((prev) => {
                             const next = [...prev];
                             next[index] = { ...next[index], match: null, matchLoading: false };
@@ -252,9 +276,6 @@ export default function DiscoverScreen() {
             });
         } catch (e: any) {
             const msg: string = e?.message ?? "";
-            console.error("[Discover] loadFeed caught error:", e);
-            console.error("[Discover] error message:", msg);
-            console.error("[Discover] error stack:", e?.stack);
             if (msg.toLowerCase().includes("expired") || msg.toLowerCase().includes("401")) {
                 const refreshed = await refreshSpotifyToken();
                 if (!refreshed) await signOut();
@@ -269,7 +290,9 @@ export default function DiscoverScreen() {
         if (!spotifyToken || loadingMore) return;
         setLoadingMore(true);
         try {
-            const tracks = await getTrendingTracks(spotifyToken, 10);
+            const raw = await getTrendingTracks(spotifyToken, 20);
+            const tracks = raw.filter((t) => !seenIds.current.has(t.id)).slice(0, 10);
+            tracks.forEach((t) => seenIds.current.add(t.id));
             const startIndex = feedItems.length;
             const newItems: FeedItem[] = tracks.map((track) => ({
                 track,
@@ -302,6 +325,55 @@ export default function DiscoverScreen() {
         }
     }
 
+    async function loadPreview() {
+        if (!spotifyToken) return;
+        const tracks: SpotifyTrack[] = await loadPreviewPlaylist();
+
+        if (tracks.length === 0) {
+            setPreviewEmpty(true);
+            return;
+        }
+
+        // Skip re-running findMusicVideo if the playlist hasn't changed
+        const ids = tracks.map((t) => t.id);
+        if (JSON.stringify(ids) === JSON.stringify(previewTrackIds.current)) return;
+        previewTrackIds.current = ids;
+
+        setPreviewEmpty(false);
+        setPreviewLoading(true);
+
+        const items: FeedItem[] = tracks.map((track) => ({
+            track,
+            match: null,
+            matchLoading: true,
+        }));
+        setPreviewItems(items);
+        setPreviewLoading(false);
+
+        tracks.forEach((track, index) => {
+            findMusicVideo(track, spotifyToken)
+                .then((match) => {
+                    setPreviewItems((prev) => {
+                        const next = [...prev];
+                        next[index] = { ...next[index], match, matchLoading: false };
+                        return next;
+                    });
+                })
+                .catch(() => {
+                    setPreviewItems((prev) => {
+                        const next = [...prev];
+                        next[index] = { ...next[index], match: null, matchLoading: false };
+                        return next;
+                    });
+                });
+        });
+    }
+
+    function handleTabChange(tab: Tab) {
+        setActiveTab(tab);
+        setCurrentIndex(0);
+    }
+
     const onViewableItemsChanged = useCallback(
         ({ viewableItems }: { viewableItems: ViewToken[] }) => {
             if (viewableItems.length > 0 && viewableItems[0].index != null) {
@@ -328,6 +400,8 @@ export default function DiscoverScreen() {
         );
     }
 
+    const activeItems = activeTab === "findMusic" ? feedItems : previewItems;
+
     return (
         <View
             style={styles.container}
@@ -337,38 +411,77 @@ export default function DiscoverScreen() {
             }}
         >
             {containerSize.width > 0 && containerSize.height > 0 && (
-                <FlatList
-                    data={feedItems}
-                    keyExtractor={(item) => item.track.id}
-                    renderItem={({ item, index }) => (
-                        <VideoCard
-                            item={item}
-                            isActive={index === currentIndex}
-                            isNear={Math.abs(index - currentIndex) <= 2}
-                            width={containerSize.width}
-                            height={containerSize.height}
+                <>
+                    {activeTab === "preview" && previewLoading ? (
+                        <View style={styles.center}>
+                            <ActivityIndicator size="large" color={theme.primary} />
+                            <Text style={styles.loadingText}>Loading preview…</Text>
+                        </View>
+                    ) : activeTab === "preview" && previewEmpty ? (
+                        <View style={styles.center}>
+                            <Text style={styles.emptyTitle}>No playlist yet</Text>
+                            <Text style={styles.emptySubtitle}>
+                                Generate a playlist on the Generate tab to preview it here.
+                            </Text>
+                        </View>
+                    ) : (
+                        <FlatList
+                            key={activeTab}
+                            data={activeItems}
+                            keyExtractor={(item) => item.track.id}
+                            renderItem={({ item, index }) => (
+                                <VideoCard
+                                    item={item}
+                                    isActive={index === currentIndex && screenFocused}
+                                    isNear={Math.abs(index - currentIndex) <= 2}
+                                    width={containerSize.width}
+                                    height={containerSize.height}
+                                />
+                            )}
+                            pagingEnabled
+                            showsVerticalScrollIndicator={false}
+                            onViewableItemsChanged={onViewableItemsChanged}
+                            viewabilityConfig={viewabilityConfig.current}
+                            getItemLayout={(_, index) => ({
+                                length: containerSize.height,
+                                offset: containerSize.height * index,
+                                index,
+                            })}
+                            onEndReached={activeTab === "findMusic" ? loadMore : undefined}
+                            onEndReachedThreshold={0.5}
+                            ListFooterComponent={
+                                activeTab === "findMusic" && loadingMore ? (
+                                    <View style={[styles.center, { width: containerSize.width, height: containerSize.height }]}>
+                                        <ActivityIndicator size="large" color={theme.primary} />
+                                        <Text style={styles.loadingText}>Loading more…</Text>
+                                    </View>
+                                ) : null
+                            }
                         />
                     )}
-                    pagingEnabled
-                    showsVerticalScrollIndicator={false}
-                    onViewableItemsChanged={onViewableItemsChanged}
-                    viewabilityConfig={viewabilityConfig.current}
-                    getItemLayout={(_, index) => ({
-                        length: containerSize.height,
-                        offset: containerSize.height * index,
-                        index,
-                    })}
-                    onEndReached={loadMore}
-                    onEndReachedThreshold={0.5}
-                    ListFooterComponent={
-                        loadingMore ? (
-                            <View style={[styles.center, { width: containerSize.width, height: containerSize.height }]}>
-                                <ActivityIndicator size="large" color={theme.primary} />
-                                <Text style={styles.loadingText}>Loading more…</Text>
-                            </View>
-                        ) : null
-                    }
-                />
+
+                    {/* Tab bar overlaid at top */}
+                    <View style={styles.tabBar} pointerEvents="box-none">
+                        <Pressable
+                            style={styles.tabItem}
+                            onPress={() => handleTabChange("findMusic")}
+                        >
+                            <Text style={[styles.tabLabel, activeTab === "findMusic" && styles.tabLabelActive]}>
+                                Find Music
+                            </Text>
+                            {activeTab === "findMusic" && <View style={styles.tabUnderline} />}
+                        </Pressable>
+                        <Pressable
+                            style={styles.tabItem}
+                            onPress={() => handleTabChange("preview")}
+                        >
+                            <Text style={[styles.tabLabel, activeTab === "preview" && styles.tabLabelActive]}>
+                                Preview
+                            </Text>
+                            {activeTab === "preview" && <View style={styles.tabUnderline} />}
+                        </Pressable>
+                    </View>
+                </>
             )}
         </View>
     );
@@ -451,5 +564,49 @@ const styles = StyleSheet.create({
         fontSize: 14,
         textAlign: "center",
         paddingHorizontal: 32,
+    },
+    emptyTitle: {
+        color: "#fff",
+        fontSize: 18,
+        fontWeight: "700",
+    },
+    emptySubtitle: {
+        color: "rgba(255,255,255,0.55)",
+        fontSize: 14,
+        textAlign: "center",
+        paddingHorizontal: 40,
+        lineHeight: 20,
+    },
+    tabBar: {
+        position: "absolute",
+        top: 56,
+        left: 0,
+        right: 0,
+        flexDirection: "row",
+        justifyContent: "center",
+        gap: 32,
+        zIndex: 10,
+    },
+    tabItem: {
+        alignItems: "center",
+        paddingBottom: 6,
+    },
+    tabLabel: {
+        color: "rgba(255,255,255,0.5)",
+        fontSize: 15,
+        fontWeight: "600",
+        letterSpacing: 0.2,
+    },
+    tabLabelActive: {
+        color: "#fff",
+    },
+    tabUnderline: {
+        position: "absolute",
+        bottom: 0,
+        left: 0,
+        right: 0,
+        height: 2,
+        backgroundColor: "#fff",
+        borderRadius: 1,
     },
 });

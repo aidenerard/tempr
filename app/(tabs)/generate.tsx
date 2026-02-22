@@ -6,7 +6,7 @@ import {
   generateQueueSuggestions,
   generateReplacementSong,
 } from "@/lib/gemini";
-import { getSavedIds, saveQueue } from "@/lib/queueStorage";
+import { getSavedIds, saveQueue, savePreviewPlaylist } from "@/lib/queueStorage";
 import {
   addToQueue,
   getLikedTracks,
@@ -17,7 +17,7 @@ import {
 } from "@/lib/spotify";
 import { FontAwesome } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -145,6 +145,7 @@ function SwipeableTrackRow({
 export default function GenerateScreen() {
   const { spotifyToken } = useAuth();
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [generating, setGenerating] = useState(false);
@@ -324,6 +325,13 @@ export default function GenerateScreen() {
         albumArt: matchAlbumArt(n, artLookup),
         uri: matchTrackUri(n, uriLookup),
       }));
+
+      // Save matched full SpotifyTrack objects so the Discover Preview tab can use them
+      const previewTracks = songs
+        .filter((s) => s.uri)
+        .map((s) => likedTracks.find((t) => t.uri === s.uri))
+        .filter(Boolean);
+      savePreviewPlaylist(previewTracks);
 
       const af = suggestions.audioFeatures;
       const moodLine = formatMoodSummary(af);
@@ -767,6 +775,7 @@ export default function GenerateScreen() {
                 );
 
               return (
+                <>
                 <View style={styles.actionRow}>
                   <Pressable
                     style={({ pressed }) => [
@@ -830,6 +839,22 @@ export default function GenerateScreen() {
                     </Text>
                   </Pressable>
                 </View>
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.previewButton,
+                    pressed && styles.actionButtonPressed,
+                  ]}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/(tabs)/discover",
+                      params: { tab: "preview" },
+                    })
+                  }
+                >
+                  <FontAwesome name="play-circle" size={14} color="#fff" />
+                  <Text style={styles.previewButtonText}>Preview in Discover</Text>
+                </Pressable>
+                </>
               );
             })()}
           </>
@@ -1355,6 +1380,21 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 10,
     backgroundColor: "transparent",
+  },
+  previewButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: theme.primary,
+    marginTop: 8,
+  },
+  previewButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#fff",
   },
   actionButton: {
     flex: 1,

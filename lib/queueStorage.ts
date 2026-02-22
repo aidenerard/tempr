@@ -44,3 +44,20 @@ export async function getSavedIds(): Promise<Set<string>> {
   const queues = await loadQueues();
   return new Set(queues.map((q) => q.id));
 }
+
+const PREVIEW_KEY = "tempr_preview_playlist";
+
+// Stores the full SpotifyTrack[] for the most recently generated playlist
+export async function savePreviewPlaylist(tracks: any[]): Promise<void> {
+  await AsyncStorage.setItem(PREVIEW_KEY, JSON.stringify(tracks));
+}
+
+export async function loadPreviewPlaylist(): Promise<any[]> {
+  const raw = await AsyncStorage.getItem(PREVIEW_KEY);
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
