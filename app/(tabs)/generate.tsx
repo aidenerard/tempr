@@ -9,6 +9,7 @@ import {
 import { getSavedIds, saveQueue } from "@/lib/queueStorage";
 import {
   addToQueue,
+  getAvailableDevices,
   getLikedTracks,
   getTopArtists,
   getTopTracks,
@@ -514,6 +515,15 @@ export default function GenerateScreen() {
       );
     if (queuable.length === 0) return;
 
+    let deviceId: string | undefined;
+    try {
+      const devices = await getAvailableDevices(spotifyToken);
+      const active = devices.find((d) => d.is_active);
+      deviceId = (active ?? devices[0])?.id;
+    } catch {
+      deviceId = undefined;
+    }
+
     const keys = queuable.map(({ index }) => `${msg.id}-${index}`);
     setQueuedSongs((prev) => {
       const next = { ...prev };
@@ -524,7 +534,7 @@ export default function GenerateScreen() {
     for (const { song, index } of queuable) {
       const key = `${msg.id}-${index}`;
       try {
-        await addToQueue(spotifyToken, song.uri!);
+        await addToQueue(spotifyToken, song.uri!, deviceId);
         setQueuedSongs((prev) => ({ ...prev, [key]: "queued" }));
       } catch {
         setQueuedSongs((prev) => ({ ...prev, [key]: "error" }));

@@ -31,7 +31,7 @@ import {
   requestNotificationPermission,
   scanAndScheduleUpcomingEvents,
 } from "@/lib/calendarNotifications";
-import { addToQueue } from "@/lib/spotify";
+import { addToQueue, getLikedTracks } from "@/lib/spotify";
 
 type ConnectionState = "unknown" | "disconnected" | "connected";
 
@@ -48,6 +48,9 @@ export default function CalendarScreen() {
   const [scanning, setScanning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [queuingAll, setQueuingAll] = useState<string | null>(null);
+  const [queuedSongs, setQueuedSongs] = useState<
+    Record<string, "queuing" | "queued" | "error">
+  >({});
   const scanInProgress = useRef(false);
 
   const loadData = useCallback(async () => {
@@ -141,23 +144,104 @@ export default function CalendarScreen() {
   const handleAddAllToQueue = async (rec: CalendarRecommendation) => {
     if (!spotifyToken) return;
     setQueuingAll(rec.id);
-    let added = 0;
-    for (const song of rec.songs) {
-      try {
-        const parts = song.name.split(" - ");
-        const query = parts.length > 1
-          ? `${parts[0]} ${parts[1]}`
-          : song.name;
-        const { searchTracks } = await import("@/lib/spotify");
-        const results = await searchTracks(spotifyToken, query, 1);
-        if (results[0]) {
-          await addToQueue(spotifyToken, results[0].uri);
+    try {
+      const likedTracks = await getLikedTracks(spotifyToken, 500);
+      const normalize = (s: string) => s.toLowerCase().trim().replace(/\s+/g, " ");
+      const queuable: { song: { name: string }; index: number; uri: string }[] = [];
+      for (let i = 0; i < rec.songs.length; i++) {
+        if (queuedSongs[`${rec.id}-${i}`]) continue;
+        const song = rec.songs[i];
+        const parts = song.name.split(" - ").map((p) => p.trim());
+        const wantTitle = parts[0] ?? "";
+        const wantArtist = parts[1] ?? "";
+        const match = likedTracks.find((t) => {
+          const trackTitle = normalize(t.name);
+          const trackArtist = t.artists?.[0]?.name
+            ? normalize(t.artists[0].name)
+            : "";
+          return (
+            normalize(wantTitle) === trackTitle &&
+            normalize(wantArtist) === trackArtist
+          );
+        });
+        if (match?.uri) queuable.push({ song, index: i, uri: match.uri });
+      }
+      if (queuable.length === 0) {
+        Alert.alert(
+          "Queue",
+          "No matching tracks in your liked songs or they're already in your queue. Open the Spotify app and start playing something, then try again.",
+        );
+        return;
+      }
+
+      const keys = queuable.map(({ index }) => `${rec.id}-${index}`);
+      setQueuedSongs((prev) => {
+        const next = { ...prev };
+        keys.forEach((k) => (next[k] = "queuing"));
+        return next;
+      });
+
+      let added = 0;
+      let firstError: string | null = null;
+      const addDelayMs = 600;
+      for (let i = 0; i < queuable.length; i++) {
+        if (i > 0) await new Promise((r) => setTimeout(r, addDelayMs));
+        const { index, uri } = queuable[i];
+        const key = `${rec.id}-${index}`;
+        try {
+          await addToQueue(spotifyToken, uri);
+          setQueuedSongs((prev) => ({ ...prev, [key]: "queued" }));
           added++;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!firstError) firstError = msg;
+          setQueuedSongs((prev) => ({ ...prev, [key]: "error" }));
+          setTimeout(() => {
+            setQueuedSongs((prev) => {
+              const next = { ...prev };
+              delete next[key];
+              return next;
+            });
+          }, 2000);
         }
-      } catch {}
+      }
+
+      if (added > 0) {
+        Alert.alert(
+          "Queue",
+          added === queuable.length
+            ? `${added} tracks added to your Spotify queue.`
+            : `${added} of ${queuable.length} tracks added.${firstError ? " Some failed — try again in a minute if Spotify rate-limited." : ""}`,
+        );
+      }
+      if (firstError && added === 0) {
+        const isRateLimit = /429|rate limit/i.test(firstError);
+        const isNoDevice =
+          /NO_ACTIVE_DEVICE|404|no active device|permission/i.test(firstError);
+        Alert.alert(
+          "Queue",
+          isRateLimit
+            ? "Spotify rate limit. Wait about a minute and try again."
+            : isNoDevice
+              ? "Open the Spotify app and start playing any song. Then try Add to Queue again."
+              : firstError,
+        );
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const isRateLimit = /429|rate limit/i.test(msg);
+      const isNoDevice = /NO_ACTIVE_DEVICE|404|no active device|permission/i.test(msg);
+      Alert.alert(
+        "Queue",
+        isRateLimit
+          ? "Spotify rate limit. Wait about a minute and try again."
+          : isNoDevice
+            ? "Open the Spotify app and start playing any song. Then try Add to Queue again."
+            : msg || "Could not add tracks. Try again in a moment.",
+      );
+    } finally {
+      setQueuingAll(null);
     }
-    setQueuingAll(null);
-    Alert.alert("Added to Queue", `${added} tracks added to your Spotify queue.`);
   };
 
   const toggleExpand = (id: string) => {
@@ -450,6 +534,7 @@ export default function CalendarScreen() {
                         const parts = song.name.split(" - ");
                         const title = parts[0]?.trim() ?? song.name;
                         const artist = parts[1]?.trim();
+                        const queueState = queuedSongs[`${rec.id}-${i}`];
                         return (
                           <View
                             style={styles.trackRow}
@@ -488,35 +573,73 @@ export default function CalendarScreen() {
                                 </Text>
                               ) : null}
                             </View>
+                            {queueState ? (
+                              queueState === "queuing" ? (
+                                <ActivityIndicator
+                                  size={12}
+                                  color={theme.primary}
+                                />
+                              ) : (
+                                <FontAwesome
+                                  name={
+                                    queueState === "queued" ? "check" : "times"
+                                  }
+                                  size={12}
+                                  color={
+                                    queueState === "queued"
+                                      ? theme.success
+                                      : theme.danger
+                                  }
+                                />
+                              )
+                            ) : null}
                           </View>
                         );
                       })}
                     </View>
 
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.addAllButton,
-                        pressed && styles.addAllButtonPressed,
-                        queuingAll === rec.id && styles.addAllButtonDisabled,
-                      ]}
-                      onPress={() => handleAddAllToQueue(rec)}
-                      disabled={queuingAll === rec.id}
-                    >
-                      {queuingAll === rec.id ? (
-                        <ActivityIndicator color="#fff" size="small" />
-                      ) : (
-                        <>
-                          <FontAwesome
-                            name="play"
-                            size={13}
-                            color="#fff"
-                          />
+                    {(() => {
+                      const allKeys = rec.songs.map((_, i) => `${rec.id}-${i}`);
+                      const queuingCount = allKeys.filter(
+                        (k) => queuedSongs[k] === "queuing",
+                      ).length;
+                      const isAdding =
+                        queuingAll === rec.id || queuingCount > 0;
+                      const allQueued =
+                        !isAdding &&
+                        rec.songs.some(
+                          (_, i) => queuedSongs[`${rec.id}-${i}`] === "queued",
+                        );
+                      return (
+                        <Pressable
+                          style={({ pressed }) => [
+                            styles.addAllButton,
+                            pressed && styles.addAllButtonPressed,
+                            isAdding && styles.addAllButtonDisabled,
+                            allQueued && styles.addAllButtonDone,
+                          ]}
+                          onPress={() => handleAddAllToQueue(rec)}
+                          disabled={isAdding}
+                        >
+                          {isAdding ? (
+                            <ActivityIndicator color="#fff" size="small" />
+                          ) : (
+                            <FontAwesome
+                              name={allQueued ? "check" : "play"}
+                              size={13}
+                              color="#fff"
+                            />
+                          )}
                           <Text style={styles.addAllButtonText}>
-                            Add All to Queue
+                            {allQueued
+                              ? "Added to Queue"
+                              : isAdding
+                                ? "Adding..."
+                                : "Add All to Queue"}
                           </Text>
-                        </>
-                      )}
-                    </Pressable>
+                        </Pressable>
+                      );
+                    })()}
                   </View>
                 )}
               </View>
@@ -839,6 +962,9 @@ const styles = StyleSheet.create({
   },
   addAllButtonDisabled: {
     opacity: 0.6,
+  },
+  addAllButtonDone: {
+    backgroundColor: theme.success,
   },
   addAllButtonText: {
     color: "#fff",

@@ -24,7 +24,7 @@ export default function LoginScreen() {
           redirectTo,
           skipBrowserRedirect: true,
           scopes:
-            "user-read-email user-read-private streaming user-library-read user-top-read playlist-read-private",
+            "user-read-email user-read-private streaming user-library-read user-top-read playlist-read-private user-modify-playback-state user-read-playback-state",
         },
       });
 
@@ -41,32 +41,66 @@ export default function LoginScreen() {
           const fragment = url.hash ? url.hash.substring(1) : "";
           const search = url.search ? url.search.substring(1) : "";
           const params = new URLSearchParams(fragment || search);
-          console.log("[Login] redirect params:", Object.fromEntries(params));
+          let accessToken = params.get("access_token");
+          let refreshToken = params.get("refresh_token");
+          let providerToken = params.get("provider_token");
+          let providerRefreshToken = params.get("provider_refresh_token");
+          let errorCode = params.get("error");
+          let errorDesc = params.get("error_description");
+          const raw = fragment || search;
+          if (raw && (raw.startsWith("{") || raw.includes("{"))) {
+            try {
+              const parsed = (() => {
+                try {
+                  return JSON.parse(raw) as Record<string, string>;
+                } catch {
+                  return JSON.parse(
+                    decodeURIComponent(raw),
+                  ) as Record<string, string>;
+                }
+              })();
+              accessToken = parsed.access_token ?? accessToken;
+              refreshToken = parsed.refresh_token ?? refreshToken;
+              providerToken = parsed.provider_token ?? providerToken;
+              providerRefreshToken =
+                parsed.provider_refresh_token ?? providerRefreshToken;
+              errorCode = parsed.error ?? errorCode;
+              errorDesc = parsed.error_description ?? errorDesc;
+            } catch {
+              /* keep URLSearchParams values */
+            }
+          }
+          console.log("[Login] redirect params:", {
+            hasAccessToken: !!accessToken,
+            hasProviderToken: !!providerToken,
+          });
 
-          const errorCode = params.get("error");
-          const errorDesc = params.get("error_description");
           if (errorCode) {
             Alert.alert("Auth Error", errorDesc || errorCode);
             return;
           }
 
-          const accessToken = params.get("access_token");
-          const refreshToken = params.get("refresh_token");
-          const providerToken = params.get("provider_token");
-          const providerRefreshToken = params.get("provider_refresh_token");
-
           if (providerToken) {
             await AsyncStorage.setItem("tempr_spotify_token", providerToken);
           }
           if (providerRefreshToken) {
-            await AsyncStorage.setItem("tempr_spotify_refresh_token", providerRefreshToken);
+            await AsyncStorage.setItem(
+              "tempr_spotify_refresh_token",
+              providerRefreshToken,
+            );
           }
-
           if (accessToken && refreshToken) {
             await supabase.auth.setSession({
               access_token: accessToken,
               refresh_token: refreshToken,
             });
+          }
+          if (!providerToken) {
+            const { data } = await supabase.auth.getSession();
+            const fromSession = data.session?.provider_token;
+            if (fromSession) {
+              await AsyncStorage.setItem("tempr_spotify_token", fromSession);
+            }
           }
         }
       }
