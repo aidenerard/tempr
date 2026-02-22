@@ -1,19 +1,17 @@
 import { Text, View } from "@/components/Themed";
 import { theme } from "@/constants/Colors";
 import { useAuth } from "@/lib/AuthContext";
+import { getLikedTracks } from "@/lib/spotify";
 import {
   adjustQueueSuggestions,
   generateQueueSuggestions,
   generateReplacementSong,
 } from "@/lib/gemini";
-import { saveQueue } from "@/lib/queueStorage";
-import {
-  addToQueue,
-  getLikedTracks,
-  searchTracks,
-  type SpotifyTrack,
-} from "@/lib/spotify";
+import { getSavedIds, saveQueue } from "@/lib/queueStorage";
+import { addToQueue, searchTracks, type SpotifyTrack } from "@/lib/spotify";
 import { FontAwesome } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
+import { useFocusEffect } from "expo-router";
 import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -21,13 +19,12 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   StyleSheet,
   TextInput,
-  Modal,
 } from "react-native";
-import { useFocusEffect } from "expo-router";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   Easing,
@@ -39,23 +36,6 @@ import Animated, {
   withSpring,
   withTiming,
 } from "react-native-reanimated";
-import * as ImagePicker from "expo-image-picker";
-import { useAuth } from "@/lib/AuthContext";
-import { theme } from "@/constants/Colors";
-import {
-  getTopTracks,
-  getTopArtists,
-  searchTracks,
-  addToQueue,
-  type SpotifyTrack,
-  type SpotifyArtist,
-} from "@/lib/spotify";
-import {
-  generateQueueSuggestions,
-  generateReplacementSong,
-  adjustQueueSuggestions,
-} from "@/lib/gemini";
-import { saveQueue, getSavedIds } from "@/lib/queueStorage";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type SongEntry = {
@@ -578,9 +558,7 @@ export default function GenerateScreen() {
       savedAt: Date.now(),
     });
     setMessages((prev) =>
-      prev.map((m) =>
-        m.id === saveModalMsg.id ? { ...m, saved: true } : m,
-      ),
+      prev.map((m) => (m.id === saveModalMsg.id ? { ...m, saved: true } : m)),
     );
     setSaveModalMsg(null);
   };
@@ -954,7 +932,7 @@ export default function GenerateScreen() {
         <Pressable
           style={[
             styles.sendButton,
-            (!input.trim() && !selectedImage || generating) &&
+            ((!input.trim() && !selectedImage) || generating) &&
               styles.sendButtonDisabled,
           ]}
           onPress={handleSubmit}
