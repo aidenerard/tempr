@@ -1,7 +1,7 @@
-const orange = "#FF6B2C";
-const orangeLight = "#FF8F5E";
-const orangeMuted = "rgba(255, 107, 44, 0.15)";
-const orangeBorder = "rgba(255, 107, 44, 0.25)";
+const orange = "#CC5623";
+const orangeLight = "#CC724B";
+const orangeMuted = "rgba(204, 86, 35, 0.18)";
+const orangeBorder = "rgba(204, 86, 35, 0.3)";
 
 export const theme = {
   primary: orange,
@@ -15,8 +15,8 @@ export const theme = {
   surfaceBorder: "rgba(255, 255, 255, 0.06)",
 
   text: "#FFFFFF",
-  textSecondary: "rgba(255, 255, 255, 0.55)",
-  textMuted: "rgba(255, 255, 255, 0.3)",
+  textSecondary: "rgba(255, 255, 255, 0.7)",
+  textMuted: "rgba(255, 255, 255, 0.45)",
 
   danger: "#FF4444",
   dangerMuted: "rgba(255, 68, 68, 0.15)",

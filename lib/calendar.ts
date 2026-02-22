@@ -31,7 +31,7 @@ async function getDefaultCalendarIds(): Promise<string[]> {
 }
 
 export async function getUpcomingEvents(
-  hoursAhead = 24,
+  hoursAhead = 168,
 ): Promise<CalendarEvent[]> {
   const hasPermission = await getCalendarPermissionStatus();
   if (!hasPermission) return [];

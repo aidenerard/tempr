@@ -1,5 +1,6 @@
 import { StyleSheet, ScrollView, Pressable, Image } from "react-native";
 import { Text, View } from "@/components/Themed";
+import { Logo } from "@/components/Logo";
 import { useAuth } from "@/lib/AuthContext";
 import { FontAwesome } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -19,18 +20,21 @@ export default function ProfileScreen() {
 
   return (
     <ScrollView
-      style={[styles.container, { paddingTop: insets.top + 16 }]}
+      style={[styles.container, { paddingTop: insets.top + 20 }]}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
     >
-      <Text style={styles.headerTitle}>Profile</Text>
+      <View style={styles.header}>
+        <Logo size={40} />
+        <Text style={styles.headerTitle}>Profile</Text>
+      </View>
 
       <View style={styles.profileCard}>
         {avatarUrl ? (
           <Image source={{ uri: avatarUrl }} style={styles.avatar} />
         ) : (
           <View style={styles.avatarPlaceholder}>
-            <FontAwesome name="user" size={28} color={theme.textMuted} />
+            <FontAwesome name="user" size={30} color={theme.textMuted} />
           </View>
         )}
         <View style={styles.profileInfo}>
@@ -44,7 +48,7 @@ export default function ProfileScreen() {
       <View style={styles.connectionCard}>
         <View style={styles.connectionRow}>
           <View style={styles.connectionIconWrap}>
-            <FontAwesome name="spotify" size={20} color="#1DB954" />
+            <FontAwesome name="spotify" size={24} color="#1DB954" />
           </View>
           <View style={styles.connectionInfo}>
             <Text style={styles.connectionName}>Spotify</Text>
@@ -65,13 +69,15 @@ export default function ProfileScreen() {
 
       <View style={styles.menuCard}>
         <View style={styles.menuRow}>
-          <FontAwesome name="info-circle" size={16} color={theme.textSecondary} />
+          <FontAwesome name="info-circle" size={18} color={theme.textSecondary} />
           <Text style={styles.menuLabel}>Version</Text>
           <Text style={styles.menuValue}>1.0.0</Text>
         </View>
         <View style={styles.menuDivider} />
         <View style={styles.menuRow}>
-          <FontAwesome name="fire" size={16} color={theme.primary} />
+          <View style={styles.logoSmallWrap}>
+            <Logo size={24} />
+          </View>
           <Text style={styles.menuLabel}>Powered by</Text>
           <Text style={styles.menuValue}>Gemini + Spotify</Text>
         </View>
@@ -84,7 +90,7 @@ export default function ProfileScreen() {
         ]}
         onPress={signOut}
       >
-        <FontAwesome name="sign-out" size={16} color={theme.danger} />
+        <FontAwesome name="sign-out" size={18} color={theme.danger} />
         <Text style={styles.signOutText}>Sign Out</Text>
       </Pressable>
     </ScrollView>
@@ -97,35 +103,42 @@ const styles = StyleSheet.create({
     backgroundColor: theme.bg,
   },
   content: {
-    paddingHorizontal: 20,
-    paddingBottom: 60,
+    paddingHorizontal: 24,
+    paddingBottom: 64,
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 28,
+    backgroundColor: "transparent",
   },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 30,
     fontWeight: "800",
     color: theme.text,
     letterSpacing: -0.5,
-    marginBottom: 24,
+    lineHeight: 36,
   },
   profileCard: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: theme.surface,
-    borderRadius: 16,
-    padding: 20,
+    borderRadius: 20,
+    padding: 24,
     borderWidth: 1,
     borderColor: theme.surfaceBorder,
-    marginBottom: 28,
+    marginBottom: 32,
   },
   avatar: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
   },
   avatarPlaceholder: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     backgroundColor: theme.surfaceLight,
     alignItems: "center",
     justifyContent: "center",
@@ -155,11 +168,11 @@ const styles = StyleSheet.create({
   },
   connectionCard: {
     backgroundColor: theme.surface,
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 18,
+    padding: 20,
     borderWidth: 1,
     borderColor: theme.surfaceBorder,
-    marginBottom: 28,
+    marginBottom: 32,
   },
   connectionRow: {
     flexDirection: "row",
@@ -167,10 +180,10 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   connectionIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: "rgba(29, 185, 84, 0.12)",
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: "rgba(29, 185, 84, 0.15)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -202,16 +215,23 @@ const styles = StyleSheet.create({
   },
   menuCard: {
     backgroundColor: theme.surface,
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 18,
+    padding: 20,
     borderWidth: 1,
     borderColor: theme.surfaceBorder,
-    marginBottom: 28,
+    marginBottom: 32,
   },
   menuRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 12,
+    backgroundColor: "transparent",
+  },
+  logoSmallWrap: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: "transparent",
   },
   menuLabel: {
@@ -241,8 +261,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   signOutPressed: {
-    opacity: 0.7,
-    transform: [{ scale: 0.98 }],
+    opacity: 0.85,
+    transform: [{ scale: 0.99 }],
   },
   signOutText: {
     color: theme.danger,

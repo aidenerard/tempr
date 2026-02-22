@@ -1,5 +1,5 @@
-import * as Notifications from "expo-notifications";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Notifications from "expo-notifications";
 import { getUpcomingEvents, type CalendarEvent } from "./calendar";
 import {
   isEventProcessed,
@@ -8,8 +8,8 @@ import {
   type CalendarRecommendation,
 } from "./calendarStorage";
 import { generateEventPlaylist } from "./gemini";
-import { getLikedTracks, searchTracks, batchedSearch } from "./spotify";
 import type { SpotifyTrack } from "./spotify";
+import { batchedSearch, getLikedTracks } from "./spotify";
 
 const LIKED_CACHE_KEY = "tempr_calendar_liked_cache";
 const LIKED_CACHE_TTL = 30 * 60 * 1000;

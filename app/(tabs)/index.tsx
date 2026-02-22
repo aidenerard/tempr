@@ -1,26 +1,28 @@
-import {
-  StyleSheet,
-  ScrollView,
-  Pressable,
-  FlatList,
-  ActivityIndicator,
-} from "react-native";
+import { Logo } from "@/components/Logo";
 import { Text, View } from "@/components/Themed";
-import { useAuth } from "@/lib/AuthContext";
-import { FontAwesome } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
-import { useState, useCallback } from "react";
 import { theme } from "@/constants/Colors";
+import { useAuth } from "@/lib/AuthContext";
 import {
+  formatEventDate,
+  formatEventTime,
   getCalendarPermissionStatus,
   getUpcomingEvents,
-  formatEventTime,
-  formatEventDate,
   type CalendarEvent,
 } from "@/lib/calendar";
 import { loadRecommendations } from "@/lib/calendarStorage";
+import { FontAwesome } from "@expo/vector-icons";
+import { useFocusEffect, useRouter } from "expo-router";
+import { useCallback, useState } from "react";
+import { LinearGradient } from "expo-linear-gradient";
+import {
+  ActivityIndicator,
+  FlatList,
+  ImageBackground,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 function getGreeting(): string {
   const h = new Date().getHours();
@@ -29,13 +31,79 @@ function getGreeting(): string {
   return "Good evening";
 }
 
+function getTimeUntilNextEvent(events: CalendarEvent[]): string | null {
+  if (events.length === 0) return null;
+  const now = Date.now();
+  const next = events[0].startDate.getTime();
+  if (next <= now) return null;
+  const mins = Math.round((next - now) / 60000);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
+}
+
+function getEventEmoji(title: string): string {
+  const t = title.toLowerCase();
+  if (t.includes("meeting") || t.includes("call") || t.includes("sync")) return "📅";
+  if (t.includes("workout") || t.includes("gym") || t.includes("run")) return "💪";
+  if (t.includes("dinner") || t.includes("lunch") || t.includes("coffee")) return "☕";
+  if (t.includes("birthday") || t.includes("party")) return "🎉";
+  if (t.includes("flight") || t.includes("travel") || t.includes("trip")) return "✈️";
+  if (t.includes("interview")) return "🎯";
+  return "📌";
+}
+
+function getWeekDaysWithEvents(events: CalendarEvent[]): Set<number> {
+  const days = new Set<number>();
+  const now = new Date();
+  const startOfWeek = new Date(now);
+  startOfWeek.setDate(now.getDate() - now.getDay());
+  startOfWeek.setHours(0, 0, 0, 0);
+  for (const e of events) {
+    const d = Math.floor((e.startDate.getTime() - startOfWeek.getTime()) / 86400000);
+    if (d >= 0 && d < 7) days.add(d);
+  }
+  return days;
+}
+
 const QUICK_VIBES = [
-  { label: "Chill", icon: "moon-o" as const, prompt: "late night chill vibes" },
-  { label: "Workout", icon: "bolt" as const, prompt: "high energy workout" },
-  { label: "Focus", icon: "headphones" as const, prompt: "deep focus study session" },
-  { label: "Drive", icon: "car" as const, prompt: "road trip with friends" },
-  { label: "Sad", icon: "cloud" as const, prompt: "melancholic rainy day" },
-  { label: "Party", icon: "star" as const, prompt: "party mode hype songs" },
+  {
+    label: "Chill",
+    icon: "moon-o" as const,
+    prompt: "late night chill vibes",
+    image: "https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=400&fit=crop",
+  },
+  {
+    label: "Workout",
+    icon: "bolt" as const,
+    prompt: "high energy workout",
+    image: "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=400&h=400&fit=crop",
+  },
+  {
+    label: "Focus",
+    icon: "headphones" as const,
+    prompt: "deep focus study session",
+    image: "https://images.unsplash.com/photo-1503676260728-1c00da094a0b?w=400&h=400&fit=crop",
+  },
+  {
+    label: "Drive",
+    icon: "car" as const,
+    prompt: "road trip with friends",
+    image: "https://images.unsplash.com/photo-1449965408869-eaa3f722e40d?w=400&h=400&fit=crop",
+  },
+  {
+    label: "Sad",
+    icon: "cloud" as const,
+    prompt: "melancholic rainy day",
+    image: "https://images.unsplash.com/photo-1529156069898-49953e39b3ac?w=400&h=400&fit=crop",
+  },
+  {
+    label: "Party",
+    icon: "star" as const,
+    prompt: "party mode hype songs",
+    image: "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=400&h=400&fit=crop",
+  },
 ];
 
 export default function HomeScreen() {
@@ -55,7 +123,7 @@ export default function HomeScreen() {
         setCalendarConnected(hasPermission);
         if (hasPermission) {
           const [events, recs] = await Promise.all([
-            getUpcomingEvents(24),
+            getUpcomingEvents(168),
             loadRecommendations(),
           ]);
           setCalendarEvents(events);
@@ -74,18 +142,22 @@ export default function HomeScreen() {
 
   return (
     <ScrollView
-      style={[styles.container, { paddingTop: insets.top + 16 }]}
+      style={[styles.container, { paddingTop: insets.top + 20 }]}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.header}>
+        <View style={styles.headerTop}>
+          <Logo size={44} />
+          <Text style={styles.brandName}>Tempr</Text>
+        </View>
         <Text style={styles.greeting}>{getGreeting()},</Text>
         <Text style={styles.name}>{firstName}</Text>
       </View>
 
       <View style={styles.heroCard}>
         <View style={styles.heroGlow} />
-        <FontAwesome name="fire" size={28} color={theme.primary} />
+        <Logo size={56} />
         <Text style={styles.heroTitle}>What's your vibe?</Text>
         <Text style={styles.heroSubtitle}>
           Tap Generate to create a personalized queue from your mood
@@ -97,28 +169,54 @@ export default function HomeScreen() {
           ]}
           onPress={() => router.push("/(tabs)/generate")}
         >
-          <FontAwesome name="magic" size={16} color="#fff" />
+          <FontAwesome name="magic" size={18} color="#fff" />
           <Text style={styles.heroButtonText}>Generate a Queue</Text>
         </Pressable>
       </View>
 
-      <Text style={styles.sectionTitle}>Quick Vibes</Text>
-      <View style={styles.vibeGrid}>
-        {QUICK_VIBES.map((vibe) => (
-          <Pressable
-            key={vibe.label}
-            style={({ pressed }) => [
-              styles.vibeCard,
-              pressed && styles.vibeCardPressed,
-            ]}
-            onPress={() => router.push("/(tabs)/generate")}
-          >
-            <View style={styles.vibeIconWrap}>
-              <FontAwesome name={vibe.icon} size={18} color={theme.primary} />
-            </View>
-            <Text style={styles.vibeLabel}>{vibe.label}</Text>
-          </Pressable>
-        ))}
+      <View style={styles.vibesSection}>
+        <View style={styles.vibesHeader}>
+          <Text style={styles.sectionTitle}>Quick Vibes</Text>
+          <Text style={styles.vibesTagline}>Set the mood in one tap</Text>
+        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.vibeScrollContent}
+        >
+          {QUICK_VIBES.map((vibe) => (
+            <Pressable
+              key={vibe.label}
+              style={({ pressed }) => [
+                styles.vibeCard,
+                pressed && styles.vibeCardPressed,
+              ]}
+              onPress={() => router.push("/(tabs)/generate")}
+            >
+              <ImageBackground
+                source={{ uri: vibe.image }}
+                style={styles.vibeImage}
+                imageStyle={styles.vibeImageStyle}
+              >
+                <LinearGradient
+                  colors={["transparent", "rgba(0,0,0,0.3)", "rgba(0,0,0,0.85)"]}
+                  locations={[0, 0.5, 1]}
+                  style={styles.vibeGradient}
+                />
+                <View style={styles.vibeContent}>
+                  <View style={styles.vibeIconWrap}>
+                    <FontAwesome
+                      name={vibe.icon}
+                      size={22}
+                      color={theme.primary}
+                    />
+                  </View>
+                  <Text style={styles.vibeLabel}>{vibe.label}</Text>
+                </View>
+              </ImageBackground>
+            </Pressable>
+          ))}
+        </ScrollView>
       </View>
 
       <Pressable
@@ -129,10 +227,20 @@ export default function HomeScreen() {
         onPress={() => router.push("/(tabs)/calendar")}
       >
         <View style={styles.calendarTitleRow}>
-          <FontAwesome name="calendar" size={16} color={theme.primary} />
+          <FontAwesome name="calendar" size={18} color={theme.primary} />
           <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>
             Calendar
           </Text>
+          {calendarConnected && calendarEvents.length > 0 && (() => {
+            const next = getTimeUntilNextEvent(calendarEvents);
+            return (
+              <View style={styles.calendarBadge}>
+                <Text style={styles.calendarBadgeText}>
+                  {next ? `Next in ${next}` : `${calendarEvents.length} events`}
+                </Text>
+              </View>
+            );
+          })()}
         </View>
         <View style={styles.calendarSeeAll}>
           <Text style={styles.calendarSeeAllText}>
@@ -140,11 +248,42 @@ export default function HomeScreen() {
           </Text>
           <FontAwesome
             name="chevron-right"
-            size={10}
+            size={12}
             color={theme.primary}
           />
         </View>
       </Pressable>
+
+      {calendarConnected && calendarEvents.length > 0 && (
+        <View style={styles.weekStrip}>
+          {["S", "M", "T", "W", "T", "F", "S"].map((day, i) => {
+            const hasEvent = getWeekDaysWithEvents(calendarEvents).has(i);
+            const isToday =
+              new Date().getDay() === i;
+            return (
+              <View
+                key={i}
+                style={[
+                  styles.weekDay,
+                  hasEvent && styles.weekDayActive,
+                  isToday && styles.weekDayToday,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.weekDayText,
+                    hasEvent && styles.weekDayTextActive,
+                    isToday && styles.weekDayTextToday,
+                  ]}
+                >
+                  {day}
+                </Text>
+                {hasEvent && <View style={styles.weekDayDot} />}
+              </View>
+            );
+          })}
+        </View>
+      )}
 
       {calendarLoading ? (
         <View style={styles.calendarLoadingWrap}>
@@ -158,10 +297,11 @@ export default function HomeScreen() {
           ]}
           onPress={() => router.push("/(tabs)/calendar")}
         >
+          <View style={styles.calendarConnectGlow} />
           <View style={styles.calendarConnectIcon}>
             <FontAwesome
               name="calendar-plus-o"
-              size={20}
+              size={24}
               color={theme.primary}
             />
           </View>
@@ -172,6 +312,14 @@ export default function HomeScreen() {
             <Text style={styles.calendarConnectSubtitle}>
               Get playlist recommendations before every event
             </Text>
+            <View style={styles.calendarConnectFeatures}>
+              <View style={styles.calendarFeaturePill}>
+                <Text style={styles.calendarFeaturePillText}>10-min heads up</Text>
+              </View>
+              <View style={styles.calendarFeaturePill}>
+                <Text style={styles.calendarFeaturePillText}>AI mood match</Text>
+              </View>
+            </View>
           </View>
         </Pressable>
       ) : calendarEvents.length === 0 ? (
@@ -184,7 +332,7 @@ export default function HomeScreen() {
         >
           <FontAwesome
             name="calendar-check-o"
-            size={18}
+            size={20}
             color={theme.textMuted}
           />
           <Text style={styles.calendarEmptyText}>
@@ -206,9 +354,14 @@ export default function HomeScreen() {
               ]}
               onPress={() => router.push("/(tabs)/calendar")}
             >
-              <View style={styles.calendarCardTimeBadge}>
-                <Text style={styles.calendarCardTime}>
-                  {formatEventTime(item.startDate)}
+              <View style={styles.calendarCardTop}>
+                <View style={styles.calendarCardTimeBadge}>
+                  <Text style={styles.calendarCardTime}>
+                    {formatEventTime(item.startDate)}
+                  </Text>
+                </View>
+                <Text style={styles.calendarCardEmoji}>
+                  {getEventEmoji(item.title)}
                 </Text>
               </View>
               <Text style={styles.calendarCardTitle} numberOfLines={2}>
@@ -228,7 +381,7 @@ export default function HomeScreen() {
       )}
 
       <View style={styles.tipCard}>
-        <FontAwesome name="lightbulb-o" size={20} color={theme.primaryLight} />
+        <FontAwesome name="lightbulb-o" size={24} color={theme.primaryLight} />
         <View style={styles.tipContent}>
           <Text style={styles.tipTitle}>Pro tip</Text>
           <Text style={styles.tipText}>
@@ -247,70 +400,86 @@ const styles = StyleSheet.create({
     backgroundColor: theme.bg,
   },
   content: {
-    paddingHorizontal: 20,
-    paddingBottom: 40,
+    paddingHorizontal: 24,
+    paddingBottom: 48,
   },
   header: {
-    marginBottom: 28,
+    marginBottom: 32,
     backgroundColor: "transparent",
   },
-  greeting: {
-    fontSize: 16,
-    color: theme.textSecondary,
-    fontWeight: "500",
+  headerTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 16,
+    backgroundColor: "transparent",
   },
-  name: {
-    fontSize: 32,
+  brandName: {
+    fontSize: 22,
     fontWeight: "800",
     color: theme.text,
-    marginTop: 2,
     letterSpacing: -0.5,
+  },
+  greeting: {
+    fontSize: 17,
+    color: theme.textSecondary,
+    fontWeight: "500",
+    letterSpacing: 0.2,
+  },
+  name: {
+    fontSize: 34,
+    fontWeight: "800",
+    color: theme.text,
+    marginTop: 4,
+    letterSpacing: -0.5,
+    lineHeight: 40,
   },
   heroCard: {
     backgroundColor: theme.surface,
-    borderRadius: 20,
-    padding: 24,
-    marginBottom: 32,
+    borderRadius: 24,
+    padding: 28,
+    marginBottom: 36,
     borderWidth: 1,
     borderColor: theme.primaryBorder,
     overflow: "hidden",
   },
   heroGlow: {
     position: "absolute",
-    top: -40,
-    right: -40,
-    width: 120,
-    height: 120,
-    borderRadius: 60,
+    top: -48,
+    right: -48,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
     backgroundColor: theme.primaryMuted,
   },
   heroTitle: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: "700",
     color: theme.text,
-    marginTop: 14,
+    marginTop: 18,
     letterSpacing: -0.3,
+    lineHeight: 30,
   },
   heroSubtitle: {
-    fontSize: 14,
+    fontSize: 15,
     color: theme.textSecondary,
-    marginTop: 6,
-    lineHeight: 20,
+    marginTop: 8,
+    lineHeight: 22,
   },
   heroButton: {
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "flex-start",
     backgroundColor: theme.primary,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 12,
-    marginTop: 18,
-    gap: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 14,
+    marginTop: 22,
+    gap: 10,
   },
   heroButtonPressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.97 }],
+    opacity: 0.9,
+    transform: [{ scale: 0.98 }],
   },
   heroButtonText: {
     color: "#fff",
@@ -318,98 +487,197 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 19,
     fontWeight: "700",
     color: theme.text,
-    marginBottom: 14,
+    marginBottom: 18,
+    letterSpacing: -0.2,
   },
-  vibeGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
-    marginBottom: 28,
+  vibesSection: {
+    marginBottom: 36,
     backgroundColor: "transparent",
   },
+  vibesHeader: {
+    marginBottom: 16,
+    backgroundColor: "transparent",
+  },
+  vibesTagline: {
+    fontSize: 14,
+    color: theme.textMuted,
+    marginTop: 4,
+    letterSpacing: 0.2,
+  },
+  vibeScrollContent: {
+    paddingRight: 24,
+  },
   vibeCard: {
-    width: "31%",
-    backgroundColor: theme.surface,
-    borderRadius: 14,
-    padding: 16,
-    alignItems: "center",
+    width: 150,
+    height: 200,
+    borderRadius: 20,
+    overflow: "hidden",
     borderWidth: 1,
-    borderColor: theme.surfaceBorder,
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    marginRight: 14,
   },
   vibeCardPressed: {
-    opacity: 0.7,
-    transform: [{ scale: 0.96 }],
+    opacity: 0.92,
+    transform: [{ scale: 0.97 }],
+  },
+  vibeImage: {
+    flex: 1,
+    justifyContent: "flex-end",
+    padding: 14,
+  },
+  vibeImageStyle: {
+    borderRadius: 19,
+  },
+  vibeGradient: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 19,
+  },
+  vibeContent: {
+    zIndex: 1,
+    alignItems: "center",
+    backgroundColor: "transparent",
   },
   vibeIconWrap: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: theme.primaryMuted,
+    backgroundColor: "rgba(0,0,0,0.5)",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 8,
   },
   vibeLabel: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: theme.text,
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#fff",
+    letterSpacing: 0.4,
+    textShadowColor: "rgba(0,0,0,0.5)",
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
   calendarSectionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 14,
+    marginBottom: 18,
+    paddingVertical: 4,
     backgroundColor: "transparent",
   },
   calendarSectionHeaderPressed: {
-    opacity: 0.7,
+    opacity: 0.8,
   },
   calendarTitleRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 10,
+    flexWrap: "wrap",
     backgroundColor: "transparent",
+  },
+  calendarBadge: {
+    backgroundColor: theme.primaryMuted,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  calendarBadgeText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: theme.primary,
+  },
+  weekStrip: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 18,
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    backgroundColor: theme.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+  },
+  weekDay: {
+    alignItems: "center",
+    width: 36,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: "transparent",
+  },
+  weekDayActive: {
+    backgroundColor: theme.primaryMuted,
+  },
+  weekDayToday: {
+    borderWidth: 1,
+    borderColor: theme.primaryBorder,
+  },
+  weekDayText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: theme.textMuted,
+  },
+  weekDayTextActive: {
+    color: theme.primary,
+  },
+  weekDayTextToday: {
+    color: theme.text,
+  },
+  weekDayDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: theme.primary,
+    marginTop: 4,
   },
   calendarSeeAll: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
+    gap: 6,
     backgroundColor: "transparent",
   },
   calendarSeeAllText: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: "600",
     color: theme.primary,
   },
   calendarLoadingWrap: {
-    height: 100,
+    height: 120,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 28,
+    marginBottom: 32,
     backgroundColor: "transparent",
   },
   calendarConnectCard: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: theme.surface,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 28,
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 32,
     borderWidth: 1,
     borderColor: theme.primaryBorder,
-    gap: 14,
+    gap: 18,
+    overflow: "hidden",
+  },
+  calendarConnectGlow: {
+    position: "absolute",
+    top: -30,
+    right: -30,
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: theme.primaryMuted,
+    opacity: 0.6,
   },
   calendarConnectCardPressed: {
-    opacity: 0.8,
-    transform: [{ scale: 0.98 }],
+    opacity: 0.9,
+    transform: [{ scale: 0.99 }],
   },
   calendarConnectIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 12,
+    width: 52,
+    height: 52,
+    borderRadius: 16,
     backgroundColor: theme.primaryMuted,
     alignItems: "center",
     justifyContent: "center",
@@ -419,28 +687,49 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   calendarConnectTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: "700",
     color: theme.text,
+    letterSpacing: -0.1,
   },
   calendarConnectSubtitle: {
-    fontSize: 12,
+    fontSize: 13,
     color: theme.textSecondary,
-    marginTop: 2,
+    marginTop: 4,
+    lineHeight: 18,
+  },
+  calendarConnectFeatures: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 12,
+  },
+  calendarFeaturePill: {
+    backgroundColor: theme.primaryMuted,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: theme.primaryBorder,
+  },
+  calendarFeaturePillText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: theme.primaryLight,
   },
   calendarEmptyCard: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: theme.surface,
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 28,
+    borderRadius: 18,
+    padding: 20,
+    marginBottom: 32,
     borderWidth: 1,
     borderColor: theme.surfaceBorder,
-    gap: 10,
+    gap: 14,
   },
   calendarEmptyCardPressed: {
-    opacity: 0.7,
+    opacity: 0.85,
   },
   calendarEmptyText: {
     fontSize: 13,
@@ -448,14 +737,14 @@ const styles = StyleSheet.create({
     fontWeight: "500",
   },
   calendarList: {
-    paddingBottom: 28,
-    gap: 10,
+    paddingBottom: 32,
+    gap: 12,
   },
   calendarCard: {
-    width: 150,
+    width: 160,
     backgroundColor: theme.surface,
-    borderRadius: 16,
-    padding: 14,
+    borderRadius: 18,
+    padding: 16,
     borderWidth: 1,
     borderColor: theme.surfaceBorder,
   },
@@ -463,13 +752,20 @@ const styles = StyleSheet.create({
     opacity: 0.8,
     transform: [{ scale: 0.96 }],
   },
+  calendarCardTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 10,
+  },
   calendarCardTimeBadge: {
-    alignSelf: "flex-start",
     backgroundColor: theme.primaryMuted,
     borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 4,
-    marginBottom: 10,
+  },
+  calendarCardEmoji: {
+    fontSize: 18,
   },
   calendarCardTime: {
     fontSize: 11,
@@ -496,11 +792,11 @@ const styles = StyleSheet.create({
   tipCard: {
     flexDirection: "row",
     backgroundColor: theme.surface,
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 18,
+    padding: 20,
     borderWidth: 1,
     borderColor: theme.surfaceBorder,
-    gap: 14,
+    gap: 18,
     alignItems: "flex-start",
   },
   tipContent: {
@@ -508,14 +804,15 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   tipTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "700",
     color: theme.primaryLight,
-    marginBottom: 4,
+    marginBottom: 6,
+    letterSpacing: -0.1,
   },
   tipText: {
-    fontSize: 13,
+    fontSize: 14,
     color: theme.textSecondary,
-    lineHeight: 19,
+    lineHeight: 21,
   },
 });

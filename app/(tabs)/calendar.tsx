@@ -1,43 +1,43 @@
-import {
-  StyleSheet,
-  ScrollView,
-  Pressable,
-  Image,
-  Alert,
-  ActivityIndicator,
-  RefreshControl,
-} from "react-native";
 import { Text, View } from "@/components/Themed";
-import { useState, useCallback, useRef } from "react";
-import { FontAwesome } from "@expo/vector-icons";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useFocusEffect } from "expo-router";
 import { theme } from "@/constants/Colors";
 import { useAuth } from "@/lib/AuthContext";
 import {
-  requestCalendarPermission,
+  formatEventDate,
+  formatEventTime,
   getCalendarPermissionStatus,
   getUpcomingEvents,
-  formatEventTime,
-  formatEventDate,
+  requestCalendarPermission,
   type CalendarEvent,
 } from "@/lib/calendar";
-import {
-  loadRecommendations,
-  deleteRecommendation,
-  type CalendarRecommendation,
-} from "@/lib/calendarStorage";
 import {
   requestNotificationPermission,
   scanAndScheduleUpcomingEvents,
 } from "@/lib/calendarNotifications";
-import { addToQueue } from "@/lib/spotify";
+import {
+  deleteRecommendation,
+  loadRecommendations,
+  type CalendarRecommendation,
+} from "@/lib/calendarStorage";
+import { addToQueue, getAvailableDevices } from "@/lib/spotify";
+import { FontAwesome } from "@expo/vector-icons";
+import { useFocusEffect } from "expo-router";
+import { useCallback, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type ConnectionState = "unknown" | "disconnected" | "connected";
 
 export default function CalendarScreen() {
   const insets = useSafeAreaInsets();
-  const { spotifyToken } = useAuth();
+  const { spotifyToken, signOut } = useAuth();
   const [connectionState, setConnectionState] =
     useState<ConnectionState>("unknown");
   const [recommendations, setRecommendations] = useState<
@@ -57,7 +57,7 @@ export default function CalendarScreen() {
     if (hasPermission) {
       const [recs, events] = await Promise.all([
         loadRecommendations(),
-        getUpcomingEvents(24),
+        getUpcomingEvents(168),
       ]);
       setRecommendations(recs);
       setUpcomingEvents(events);
@@ -142,26 +142,104 @@ export default function CalendarScreen() {
     if (!spotifyToken) return;
     setQueuingAll(rec.id);
     let added = 0;
-    for (const song of rec.songs) {
+    let noDeviceError = false;
+    let permissionsError = false;
+    try {
       try {
-        const parts = song.name.split(" - ");
-        const query = parts.length > 1
-          ? `${parts[0]} ${parts[1]}`
-          : song.name;
-        const { searchTracks } = await import("@/lib/spotify");
-        const results = await searchTracks(spotifyToken, query, 1);
-        if (results[0]) {
-          await addToQueue(spotifyToken, results[0].uri);
-          added++;
+        const devices = await getAvailableDevices(spotifyToken);
+        if (devices.length === 0) {
+          setQueuingAll(null);
+          Alert.alert(
+            "No Spotify Device",
+            "Open Spotify on your phone, computer, or speaker and start playing something, then try again.",
+          );
+          return;
         }
-      } catch {}
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes("401") || msg.toLowerCase().includes("permissions")) {
+          setQueuingAll(null);
+          Alert.alert(
+            "Permissions Needed",
+            "Please sign out and sign back in to enable adding tracks to your Spotify queue.",
+            [
+              { text: "OK" },
+              { text: "Sign Out", onPress: () => signOut() },
+            ],
+          );
+          return;
+        }
+      }
+      const { searchTracks } = await import("@/lib/spotify");
+      for (const song of rec.songs) {
+        try {
+          const parts = song.name.split(" - ").map((p) => p.trim());
+          const query =
+            parts.length > 1 ? `${parts[0]} ${parts[1]}` : song.name;
+          let results = await searchTracks(spotifyToken, query, 3);
+          if (!results[0] && parts.length > 1) {
+            results = await searchTracks(spotifyToken, `${parts[1]} ${parts[0]}`, 3);
+          }
+          if (results[0]) {
+            await addToQueue(spotifyToken, results[0].uri);
+            added++;
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg.includes("401") || msg.toLowerCase().includes("permissions")) {
+            permissionsError = true;
+            break;
+          }
+          if (
+            msg.includes("NO_ACTIVE_DEVICE") ||
+            msg.includes("404") ||
+            msg.toLowerCase().includes("device")
+          ) {
+            noDeviceError = true;
+            break;
+          }
+          if (msg.includes("403") || msg.toLowerCase().includes("premium")) {
+            noDeviceError = true;
+            break;
+          }
+        }
+        await new Promise((r) => setTimeout(r, 300));
+      }
+    } finally {
+      setQueuingAll(null);
     }
-    setQueuingAll(null);
-    Alert.alert("Added to Queue", `${added} tracks added to your Spotify queue.`);
+    if (permissionsError) {
+      Alert.alert(
+        "Permissions Needed",
+        "Please sign out and sign back in to enable adding tracks to your Spotify queue.",
+        [
+          { text: "OK" },
+          { text: "Sign Out", onPress: () => signOut() },
+        ],
+      );
+    } else if (noDeviceError || (added === 0 && rec.songs.length > 0)) {
+      Alert.alert(
+        "Couldn't Add to Queue",
+        "Open Spotify and start playing on a device first. Add to queue also requires Spotify Premium.",
+      );
+    } else if (added > 0) {
+      Alert.alert("Added to Queue", `${added} tracks added to your Spotify queue.`);
+    }
   };
 
   const toggleExpand = (id: string) => {
     setExpandedId((prev) => (prev === id ? null : id));
+  };
+
+  const getEventEmoji = (title: string): string => {
+    const t = title.toLowerCase();
+    if (t.includes("meeting") || t.includes("call") || t.includes("sync")) return "📅";
+    if (t.includes("workout") || t.includes("gym") || t.includes("run")) return "💪";
+    if (t.includes("dinner") || t.includes("lunch") || t.includes("coffee")) return "☕";
+    if (t.includes("birthday") || t.includes("party")) return "🎉";
+    if (t.includes("flight") || t.includes("travel") || t.includes("trip")) return "✈️";
+    if (t.includes("interview")) return "🎯";
+    return "📌";
   };
 
   if (connectionState === "unknown") {
@@ -175,7 +253,7 @@ export default function CalendarScreen() {
   if (connectionState === "disconnected") {
     return (
       <ScrollView
-        style={[styles.container, { paddingTop: insets.top + 16 }]}
+        style={[styles.container, { paddingTop: insets.top + 20 }]}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
@@ -196,7 +274,7 @@ export default function CalendarScreen() {
             ]}
             onPress={handleConnect}
           >
-            <FontAwesome name="calendar-plus-o" size={16} color="#fff" />
+            <FontAwesome name="calendar-plus-o" size={18} color="#fff" />
             <Text style={styles.connectButtonText}>
               Connect Apple Calendar
             </Text>
@@ -225,7 +303,7 @@ export default function CalendarScreen() {
               <View style={styles.featureIconWrap}>
                 <FontAwesome
                   name={f.icon}
-                  size={16}
+                  size={18}
                   color={theme.primary}
                 />
               </View>
@@ -242,7 +320,7 @@ export default function CalendarScreen() {
 
   return (
     <ScrollView
-      style={[styles.container, { paddingTop: insets.top + 16 }]}
+      style={[styles.container, { paddingTop: insets.top + 20 }]}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
       refreshControl={
@@ -275,7 +353,7 @@ export default function CalendarScreen() {
             <ActivityIndicator color="#fff" size="small" />
           ) : (
             <>
-              <FontAwesome name="refresh" size={13} color="#fff" />
+              <FontAwesome name="refresh" size={14} color="#fff" />
               <Text style={styles.scanButtonText}>Scan</Text>
             </>
           )}
@@ -291,6 +369,7 @@ export default function CalendarScreen() {
             );
             return (
               <View style={styles.eventRow} key={event.id}>
+                <Text style={styles.eventEmoji}>{getEventEmoji(event.title)}</Text>
                 <View style={styles.eventTimeBadge}>
                   <Text style={styles.eventTimeText}>
                     {formatEventTime(event.startDate)}
@@ -360,11 +439,9 @@ export default function CalendarScreen() {
                 >
                   <View style={styles.cardHeader}>
                     <View style={styles.cardEventIndicator}>
-                      <FontAwesome
-                        name="calendar"
-                        size={14}
-                        color={isPast ? theme.textMuted : theme.primary}
-                      />
+                      <Text style={styles.cardEventEmoji}>
+                        {getEventEmoji(rec.eventTitle)}
+                      </Text>
                     </View>
                     <View style={styles.cardHeaderContent}>
                       <Text style={styles.cardEventTitle} numberOfLines={2}>
@@ -508,7 +585,7 @@ export default function CalendarScreen() {
                         <>
                           <FontAwesome
                             name="play"
-                            size={13}
+                            size={15}
                             color="#fff"
                           />
                           <Text style={styles.addAllButtonText}>
@@ -534,15 +611,15 @@ const styles = StyleSheet.create({
     backgroundColor: theme.bg,
   },
   content: {
-    paddingHorizontal: 20,
-    paddingBottom: 40,
+    paddingHorizontal: 24,
+    paddingBottom: 48,
     flexGrow: 1,
   },
   headerRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginBottom: 20,
+    marginBottom: 24,
     backgroundColor: "transparent",
   },
   headerLeft: {
@@ -550,10 +627,11 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 30,
     fontWeight: "800",
     color: theme.text,
     letterSpacing: -0.5,
+    lineHeight: 36,
   },
   subtitle: {
     fontSize: 14,
@@ -604,6 +682,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.surfaceBorder,
     gap: 12,
+  },
+  eventEmoji: {
+    fontSize: 20,
   },
   eventTimeBadge: {
     backgroundColor: theme.primaryMuted,
@@ -662,19 +743,22 @@ const styles = StyleSheet.create({
   },
   cardHeader: {
     flexDirection: "row",
-    padding: 16,
-    paddingBottom: 8,
-    gap: 12,
+    padding: 20,
+    paddingBottom: 12,
+    gap: 14,
     alignItems: "flex-start",
     backgroundColor: "transparent",
   },
   cardEventIndicator: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
+    width: 48,
+    height: 48,
+    borderRadius: 14,
     backgroundColor: theme.primaryMuted,
     alignItems: "center",
     justifyContent: "center",
+  },
+  cardEventEmoji: {
+    fontSize: 22,
   },
   cardHeaderContent: {
     flex: 1,
@@ -827,14 +911,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: theme.primary,
-    marginHorizontal: 12,
-    marginVertical: 12,
-    paddingVertical: 14,
-    borderRadius: 12,
-    gap: 8,
+    marginHorizontal: 16,
+    marginVertical: 14,
+    paddingVertical: 16,
+    borderRadius: 14,
+    gap: 10,
   },
   addAllButtonPressed: {
-    opacity: 0.85,
+    opacity: 0.9,
     transform: [{ scale: 0.98 }],
   },
   addAllButtonDisabled: {
@@ -856,13 +940,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   connectIconWrap: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     backgroundColor: theme.primaryMuted,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 18,
+    marginBottom: 22,
   },
   connectTitle: {
     fontSize: 22,
@@ -905,17 +989,17 @@ const styles = StyleSheet.create({
   featureRow: {
     flexDirection: "row",
     backgroundColor: theme.surface,
-    borderRadius: 14,
-    padding: 16,
+    borderRadius: 16,
+    padding: 18,
     borderWidth: 1,
     borderColor: theme.surfaceBorder,
-    gap: 14,
+    gap: 16,
     alignItems: "flex-start",
   },
   featureIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 42,
+    height: 42,
+    borderRadius: 12,
     backgroundColor: theme.primaryMuted,
     alignItems: "center",
     justifyContent: "center",

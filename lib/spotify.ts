@@ -2,15 +2,37 @@ import type { AudioFeatureTargets } from "./gemini";
 
 const SPOTIFY_BASE = "https://api.spotify.com/v1";
 
-async function spotifyFetch(endpoint: string, token: string): Promise<any> {
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function spotifyFetch(
+  endpoint: string,
+  token: string,
+  retryCount = 0,
+): Promise<any> {
+  const maxRetries = 3;
   const url = `${SPOTIFY_BASE}${endpoint}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
-  });
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timeout));
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     const msg = err.error?.message || `Spotify API error: ${res.status}`;
+
+    if (res.status === 429 && retryCount < maxRetries) {
+      const retryAfter = res.headers.get("Retry-After");
+      const delayMs = retryAfter
+        ? parseInt(retryAfter, 10) * 1000
+        : Math.min(1000 * 2 ** retryCount, 10000);
+      await sleep(delayMs);
+      return spotifyFetch(endpoint, token, retryCount + 1);
+    }
+
     console.error(`[Spotify] ${res.status} on ${url} —`, msg);
     throw new Error(msg);
   }
@@ -160,19 +182,52 @@ export async function getTrendingTracks(
   return pool.sort(() => Math.random() - 0.5).slice(0, limit);
 }
 
+export type SpotifyDevice = {
+  id: string;
+  name: string;
+  is_active: boolean;
+  type: string;
+};
+
+export async function getAvailableDevices(
+  token: string,
+): Promise<SpotifyDevice[]> {
+  const data = await spotifyFetch("/me/player/devices", token);
+  return data.devices ?? [];
+}
+
 export async function addToQueue(
   token: string,
   trackUri: string,
+  opts?: { deviceId?: string; retryCount?: number },
 ): Promise<void> {
-  const res = await fetch(
-    `${SPOTIFY_BASE}/me/player/queue?uri=${encodeURIComponent(trackUri)}`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` },
-    },
-  );
+  const retryCount = opts?.retryCount ?? 0;
+  const maxRetries = 3;
+  const params = new URLSearchParams({ uri: trackUri });
+  if (opts?.deviceId) params.set("device_id", opts.deviceId);
+  const url = `${SPOTIFY_BASE}/me/player/queue?${params.toString()}`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    signal: controller.signal,
+  }).finally(() => clearTimeout(timeout));
 
   if (!res.ok) {
+    if (res.status === 429 && retryCount < maxRetries) {
+      const retryAfter = res.headers.get("Retry-After");
+      const delayMs = retryAfter
+        ? parseInt(retryAfter, 10) * 1000
+        : Math.min(1000 * 2 ** retryCount, 10000);
+      await sleep(delayMs);
+      return addToQueue(token, trackUri, {
+        ...opts,
+        retryCount: retryCount + 1,
+      });
+    }
     const err = await res.json().catch(() => ({}));
     throw new Error(
       err.error?.message || `Failed to add to queue: ${res.status}`,

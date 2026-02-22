@@ -7,11 +7,19 @@ import { StyleSheet } from "react-native";
 function TabIcon({
   name,
   color,
+  focused,
 }: {
   name: React.ComponentProps<typeof FontAwesome>["name"];
   color: string;
+  focused?: boolean;
 }) {
-  return <FontAwesome size={20} name={name} color={color} />;
+  return (
+    <FontAwesome
+      size={focused ? 24 : 22}
+      name={name}
+      color={color}
+    />
+  );
 }
 
 export default function TabLayout() {
@@ -31,14 +39,14 @@ export default function TabLayout() {
         name="index"
         options={{
           title: "Home",
-          tabBarIcon: ({ color }) => <TabIcon name="home" color={color} />,
+          tabBarIcon: ({ color, focused }) => <TabIcon name="home" color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="generate"
         options={{
           title: "Generate",
-          tabBarIcon: ({ color }) => <TabIcon name="magic" color={color} />,
+          tabBarIcon: ({ color, focused }) => <TabIcon name="magic" color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen
@@ -46,8 +54,8 @@ export default function TabLayout() {
         options={{
           href: null,
           title: "Calendar",
-          tabBarIcon: ({ color }) => (
-            <TabIcon name="calendar" color={color} />
+          tabBarIcon: ({ color, focused }) => (
+            <TabIcon name="calendar" color={color} focused={focused} />
           ),
         }}
       />
@@ -55,21 +63,21 @@ export default function TabLayout() {
         name="discover"
         options={{
           title: "Discover",
-          tabBarIcon: ({ color }) => <TabIcon name="play-circle" color={color} />,
+          tabBarIcon: ({ color, focused }) => <TabIcon name="play-circle" color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="library"
         options={{
           title: "Memories",
-          tabBarIcon: ({ color }) => <TabIcon name="heart" color={color} />,
+          tabBarIcon: ({ color, focused }) => <TabIcon name="heart" color={color} focused={focused} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: "Profile",
-          tabBarIcon: ({ color }) => <TabIcon name="user" color={color} />,
+          tabBarIcon: ({ color, focused }) => <TabIcon name="user" color={color} focused={focused} />,
         }}
       />
     </Tabs>
@@ -81,19 +89,19 @@ const styles = StyleSheet.create({
     backgroundColor: theme.tabBarBg,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.tabBarBorder,
-    height: 85,
-    paddingTop: 8,
+    height: 88,
+    paddingTop: 10,
     paddingBottom: 28,
     elevation: 0,
     shadowOpacity: 0,
   },
   tabLabel: {
-    fontSize: 10,
+    fontSize: 11,
     fontWeight: "600",
-    letterSpacing: 0.3,
-    marginTop: 4,
+    letterSpacing: 0.4,
+    marginTop: 6,
   },
   tabItem: {
-    paddingTop: 4,
+    paddingTop: 6,
   },
 });

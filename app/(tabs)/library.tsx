@@ -69,14 +69,14 @@ export default function MemoriesScreen() {
   if (queues.length === 0 && !likes) {
     return (
       <ScrollView
-        style={[styles.container, { paddingTop: insets.top + 16 }]}
+        style={[styles.container, { paddingTop: insets.top + 20 }]}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.headerTitle}>Memories</Text>
         <View style={styles.emptyState}>
           <View style={styles.emptyIconWrap}>
-            <FontAwesome name="heart-o" size={36} color={theme.primary} />
+            <FontAwesome name="heart-o" size={40} color={theme.primary} />
           </View>
           <Text style={styles.emptyTitle}>No memories yet</Text>
           <Text style={styles.emptySubtitle}>
@@ -89,7 +89,7 @@ export default function MemoriesScreen() {
 
   return (
     <ScrollView
-      style={[styles.container, { paddingTop: insets.top + 16 }]}
+      style={[styles.container, { paddingTop: insets.top + 20 }]}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
     >
@@ -197,7 +197,7 @@ export default function MemoriesScreen() {
                   >
                     <FontAwesome
                       name="trash-o"
-                      size={14}
+                      size={16}
                       color={theme.danger}
                     />
                   </Pressable>
@@ -228,7 +228,7 @@ export default function MemoriesScreen() {
                 </View>
                 <FontAwesome
                   name={isExpanded ? "chevron-up" : "chevron-down"}
-                  size={10}
+                  size={12}
                   color={theme.textMuted}
                   style={styles.chevron}
                 />
@@ -286,21 +286,22 @@ const styles = StyleSheet.create({
     backgroundColor: theme.bg,
   },
   content: {
-    paddingHorizontal: 20,
-    paddingBottom: 40,
+    paddingHorizontal: 24,
+    paddingBottom: 48,
     flexGrow: 1,
   },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 30,
     fontWeight: "800",
     color: theme.text,
     letterSpacing: -0.5,
+    lineHeight: 36,
   },
   subtitle: {
-    fontSize: 14,
+    fontSize: 15,
     color: theme.textSecondary,
-    marginTop: 4,
-    marginBottom: 20,
+    marginTop: 6,
+    marginBottom: 24,
   },
   emptyState: {
     flex: 1,
@@ -310,13 +311,13 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   emptyIconWrap: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 88,
+    height: 88,
+    borderRadius: 44,
     backgroundColor: theme.primaryMuted,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 20,
+    marginBottom: 24,
   },
   emptyTitle: {
     fontSize: 20,
@@ -334,10 +335,10 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: theme.surface,
-    borderRadius: 18,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: theme.surfaceBorder,
-    marginBottom: 16,
+    marginBottom: 20,
     overflow: "hidden",
   },
   likesCard: {
@@ -366,7 +367,7 @@ const styles = StyleSheet.create({
     letterSpacing: -0.2,
   },
   cardPressed: {
-    opacity: 0.85,
+    opacity: 0.9,
   },
   cardCover: {
     width: "100%",
@@ -380,7 +381,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   cardBody: {
-    padding: 16,
+    padding: 20,
     backgroundColor: "transparent",
   },
   cardTitleRow: {
@@ -425,9 +426,9 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   deleteButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     backgroundColor: theme.dangerMuted,
     alignItems: "center",
     justifyContent: "center",

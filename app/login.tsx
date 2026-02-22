@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
 import { FontAwesome } from "@expo/vector-icons";
+import { Logo } from "@/components/Logo";
 import { theme } from "@/constants/Colors";
 
 WebBrowser.maybeCompleteAuthSession();
@@ -24,7 +25,7 @@ export default function LoginScreen() {
           redirectTo,
           skipBrowserRedirect: true,
           scopes:
-            "user-read-email user-read-private streaming user-library-read user-library-modify user-top-read playlist-read-private playlist-modify-public playlist-modify-private",
+            "user-read-email user-read-private streaming user-library-read user-library-modify user-top-read playlist-read-private playlist-modify-public playlist-modify-private user-read-playback-state user-modify-playback-state",
         },
       });
 
@@ -82,8 +83,8 @@ export default function LoginScreen() {
       <View style={styles.bgGlow} />
 
       <View style={styles.header}>
-        <View style={styles.iconWrap}>
-          <FontAwesome name="fire" size={40} color={theme.primary} />
+        <View style={styles.logoWrap}>
+          <Logo size={120} />
         </View>
         <Text style={styles.title}>Tempr</Text>
         <Text style={styles.subtitle}>
@@ -91,7 +92,7 @@ export default function LoginScreen() {
         </Text>
       </View>
 
-      <View style={styles.buttonContainer}>
+      <View style={styles.buttonCard}>
         <Pressable
           style={({ pressed }) => [
             styles.spotifyButton,
@@ -106,7 +107,7 @@ export default function LoginScreen() {
             <>
               <FontAwesome
                 name="spotify"
-                size={22}
+                size={24}
                 color="#fff"
                 style={styles.buttonIcon}
               />
@@ -128,65 +129,67 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: 28,
+    padding: 32,
     backgroundColor: theme.bg,
   },
   bgGlow: {
     position: "absolute",
-    top: "20%",
-    width: 300,
-    height: 300,
-    borderRadius: 150,
-    backgroundColor: "rgba(255, 107, 44, 0.06)",
+    top: "12%",
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    backgroundColor: "rgba(204, 86, 35, 0.06)",
   },
   header: {
     alignItems: "center",
-    marginBottom: 64,
+    marginBottom: 56,
     backgroundColor: "transparent",
   },
-  iconWrap: {
-    width: 80,
-    height: 80,
-    borderRadius: 24,
-    backgroundColor: theme.primaryMuted,
+  logoWrap: {
+    marginBottom: 20,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 20,
+    backgroundColor: "transparent",
   },
   title: {
-    fontSize: 44,
+    fontSize: 46,
     fontWeight: "900",
     color: theme.text,
     letterSpacing: -1.5,
+    lineHeight: 52,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 17,
     color: theme.textSecondary,
-    marginTop: 10,
+    marginTop: 12,
     textAlign: "center",
-    lineHeight: 23,
+    lineHeight: 25,
   },
-  buttonContainer: {
+  buttonCard: {
     width: "100%",
+    backgroundColor: "rgba(255, 255, 255, 0.03)",
+    borderRadius: 24,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: "rgba(204, 86, 35, 0.15)",
     alignItems: "center",
-    backgroundColor: "transparent",
   },
   spotifyButton: {
     backgroundColor: "#1DB954",
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 16,
-    paddingHorizontal: 32,
-    borderRadius: 16,
+    paddingVertical: 18,
+    paddingHorizontal: 36,
+    borderRadius: 18,
     width: "100%",
   },
   spotifyButtonPressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.98 }],
+    opacity: 0.9,
+    transform: [{ scale: 0.99 }],
   },
   buttonIcon: {
-    marginRight: 12,
+    marginRight: 14,
   },
   buttonText: {
     color: "#fff",
@@ -194,11 +197,11 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   disclaimer: {
-    marginTop: 20,
-    fontSize: 12,
+    marginTop: 24,
+    fontSize: 13,
     color: theme.textMuted,
     textAlign: "center",
-    lineHeight: 18,
-    paddingHorizontal: 20,
+    lineHeight: 20,
+    paddingHorizontal: 24,
   },
 });

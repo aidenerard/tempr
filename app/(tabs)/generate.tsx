@@ -851,7 +851,7 @@ export default function GenerateScreen() {
                     })
                   }
                 >
-                  <FontAwesome name="play-circle" size={14} color="#fff" />
+                  <FontAwesome name="play-circle" size={16} color="#fff" />
                   <Text style={styles.previewButtonText}>Preview in Discover</Text>
                 </Pressable>
                 </>
@@ -879,7 +879,7 @@ export default function GenerateScreen() {
             ]}
             onPress={handleNew}
           >
-            <FontAwesome name="plus" size={12} color={theme.primary} />
+            <FontAwesome name="plus" size={14} color={theme.primary} />
             <Text style={styles.newButtonText}>New</Text>
           </Pressable>
         )}
@@ -888,7 +888,7 @@ export default function GenerateScreen() {
       {messages.length === 0 ? (
         <View style={styles.emptyState}>
           <View style={styles.emptyIconWrap}>
-            <FontAwesome name="magic" size={32} color={theme.primary} />
+            <FontAwesome name="magic" size={36} color={theme.primary} />
           </View>
           <Text style={styles.emptyTitle}>Create Your Queue</Text>
           <Text style={styles.emptySubtitle}>
@@ -979,7 +979,7 @@ export default function GenerateScreen() {
           {generating ? (
             <ActivityIndicator color="#fff" size="small" />
           ) : (
-            <FontAwesome name="arrow-up" size={16} color="#fff" />
+            <FontAwesome name="arrow-up" size={18} color="#fff" />
           )}
         </Pressable>
       </View>
@@ -1047,7 +1047,7 @@ export default function GenerateScreen() {
                 ]}
                 onPress={handleConfirmSave}
               >
-                <FontAwesome name="heart" size={14} color="#fff" />
+                <FontAwesome name="heart" size={16} color="#fff" />
                 <Text style={styles.modalSaveText}>Save</Text>
               </Pressable>
             </View>
@@ -1148,30 +1148,31 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 14,
+    paddingHorizontal: 24,
+    paddingVertical: 18,
     backgroundColor: "transparent",
   },
   headerTitle: {
-    fontSize: 28,
+    fontSize: 30,
     fontWeight: "800",
     color: theme.text,
     letterSpacing: -0.5,
+    lineHeight: 36,
   },
   newButton: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 22,
     backgroundColor: theme.primaryMuted,
     borderWidth: 1,
     borderColor: theme.primaryBorder,
   },
   newButtonPressed: {
-    opacity: 0.7,
-    transform: [{ scale: 0.96 }],
+    opacity: 0.85,
+    transform: [{ scale: 0.98 }],
   },
   newButtonText: {
     fontSize: 13,
@@ -1186,47 +1187,48 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   emptyIconWrap: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
+    width: 80,
+    height: 80,
+    borderRadius: 40,
     backgroundColor: theme.primaryMuted,
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 20,
+    marginBottom: 24,
   },
   emptyTitle: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: "700",
     color: theme.text,
     letterSpacing: -0.3,
+    lineHeight: 30,
   },
   emptySubtitle: {
-    fontSize: 14,
+    fontSize: 15,
     color: theme.textSecondary,
     textAlign: "center",
-    marginTop: 8,
-    lineHeight: 21,
-    paddingHorizontal: 12,
+    marginTop: 10,
+    lineHeight: 22,
+    paddingHorizontal: 16,
   },
   exampleChips: {
     flexDirection: "row",
     flexWrap: "wrap",
     justifyContent: "center",
-    marginTop: 28,
-    gap: 8,
+    marginTop: 32,
+    gap: 10,
     backgroundColor: "transparent",
   },
   chip: {
     backgroundColor: theme.primaryMuted,
     borderWidth: 1,
     borderColor: theme.primaryBorder,
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 9,
+    borderRadius: 22,
+    paddingHorizontal: 18,
+    paddingVertical: 11,
   },
   chipPressed: {
-    opacity: 0.7,
-    transform: [{ scale: 0.96 }],
+    opacity: 0.85,
+    transform: [{ scale: 0.98 }],
   },
   chipText: {
     fontSize: 13,
@@ -1234,8 +1236,8 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   messageList: {
-    padding: 16,
-    paddingBottom: 8,
+    padding: 20,
+    paddingBottom: 12,
   },
   userBubble: {
     alignSelf: "flex-end",
@@ -1345,11 +1347,11 @@ const styles = StyleSheet.create({
   inputContainer: {
     flexDirection: "row",
     alignItems: "flex-end",
-    padding: 12,
-    paddingBottom: Platform.OS === "ios" ? 28 : 12,
+    padding: 16,
+    paddingBottom: Platform.OS === "ios" ? 32 : 16,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: theme.surfaceBorder,
-    gap: 8,
+    gap: 10,
     backgroundColor: theme.bg,
   },
   input: {
@@ -1365,9 +1367,9 @@ const styles = StyleSheet.create({
     maxHeight: 100,
   },
   sendButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: theme.primary,
     alignItems: "center",
     justifyContent: "center",
@@ -1409,7 +1411,7 @@ const styles = StyleSheet.create({
     borderColor: theme.primaryBorder,
   },
   actionButtonPressed: {
-    opacity: 0.7,
+    opacity: 0.85,
     transform: [{ scale: 0.98 }],
   },
   actionButtonDone: {
