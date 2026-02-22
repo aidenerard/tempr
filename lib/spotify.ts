@@ -2,15 +2,37 @@ import type { AudioFeatureTargets } from "./gemini";
 
 const SPOTIFY_BASE = "https://api.spotify.com/v1";
 
-async function spotifyFetch(endpoint: string, token: string) {
+async function spotifyFetch(
+  endpoint: string,
+  token: string,
+): Promise<any> {
   const res = await fetch(`${SPOTIFY_BASE}${endpoint}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `Spotify API error: ${res.status}`);
+    throw new Error(
+      err.error?.message || `Spotify API error: ${res.status}`,
+    );
   }
   return res.json();
+}
+
+export async function batchedSearch(
+  token: string,
+  queries: string[],
+  batchSize = 3,
+): Promise<SpotifyTrack[][]> {
+  const results: SpotifyTrack[][] = [];
+  for (let i = 0; i < queries.length; i += batchSize) {
+    const batch = queries.slice(i, i + batchSize);
+    const batchResults = await Promise.all(
+      batch.map((q) => searchTracks(token, q, 1).catch(() => [])),
+    );
+    results.push(...batchResults);
+  }
+  return results;
 }
 
 export type SpotifyTrack = {
@@ -35,11 +57,11 @@ export type SpotifyArtist = {
 export async function getTopTracks(
   token: string,
   limit = 20,
-  timeRange = "medium_term"
+  timeRange = "medium_term",
 ): Promise<SpotifyTrack[]> {
   const data = await spotifyFetch(
     `/me/top/tracks?limit=${limit}&time_range=${timeRange}`,
-    token
+    token,
   );
   return data.items ?? [];
 }
@@ -47,11 +69,11 @@ export async function getTopTracks(
 export async function getTopArtists(
   token: string,
   limit = 20,
-  timeRange = "medium_term"
+  timeRange = "medium_term",
 ): Promise<SpotifyArtist[]> {
   const data = await spotifyFetch(
     `/me/top/artists?limit=${limit}&time_range=${timeRange}`,
-    token
+    token,
   );
   return data.items ?? [];
 }
@@ -59,12 +81,12 @@ export async function getTopArtists(
 export async function searchTracks(
   token: string,
   query: string,
-  limit = 5
+  limit = 1,
 ): Promise<SpotifyTrack[]> {
   const encoded = encodeURIComponent(query);
   const data = await spotifyFetch(
     `/search?q=${encoded}&type=track&limit=${limit}`,
-    token
+    token,
   );
   return data.tracks?.items ?? [];
 }
@@ -77,7 +99,7 @@ export async function getRecommendations(
     seedGenres?: string[];
     audioFeatures?: AudioFeatureTargets;
     limit?: number;
-  }
+  },
 ): Promise<SpotifyTrack[]> {
   const params = new URLSearchParams();
 
@@ -94,16 +116,14 @@ export async function getRecommendations(
     params.set("target_valence", af.valence.toFixed(2));
     params.set("target_danceability", af.danceability.toFixed(2));
     params.set("target_acousticness", af.acousticness.toFixed(2));
-    params.set("target_instrumentalness", af.instrumentalness.toFixed(2));
     params.set("target_tempo", af.tempo.toFixed(0));
-    params.set("target_liveness", af.liveness.toFixed(2));
   }
 
   params.set("limit", String(opts.limit ?? 30));
 
   const data = await spotifyFetch(
     `/recommendations?${params.toString()}`,
-    token
+    token,
   );
   return data.tracks ?? [];
 }

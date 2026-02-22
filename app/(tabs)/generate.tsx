@@ -18,20 +18,20 @@ import {
   getTopTracks,
   getTopArtists,
   searchTracks,
-  formatDuration,
-  totalDurationMinutes,
   type SpotifyTrack,
 } from "@/lib/spotify";
 import { generateQueueSuggestions } from "@/lib/gemini";
 
-const TARGET_MAX_MINUTES = 45;
+type SongEntry = {
+  name: string;
+  albumArt?: string;
+};
 
 type Message = {
   id: string;
   role: "user" | "assistant";
   text: string;
-  tracks?: SpotifyTrack[];
-  totalMinutes?: number;
+  songs?: SongEntry[];
 };
 
 const THINKING_MESSAGES = [
@@ -54,6 +54,33 @@ export default function GenerateScreen() {
       prev.map((m) => (m.id === id ? { ...m, text } : m))
     );
   }, []);
+
+  const fetchMissingArt = useCallback(
+    async (msgId: string, songs: SongEntry[], token: string) => {
+      const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+      for (let i = 0; i < songs.length; i++) {
+        if (songs[i].albumArt) continue;
+        await delay(5000);
+        try {
+          const results = await searchTracks(token, songs[i].name, 1);
+          const art =
+            results[0]?.album.images[results[0].album.images.length - 1]?.url;
+          if (art) {
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.id !== msgId || !m.songs) return m;
+                const updated = [...m.songs];
+                updated[i] = { ...updated[i], albumArt: art };
+                return { ...m, songs: updated };
+              }),
+            );
+          }
+        } catch {}
+      }
+    },
+    [],
+  );
 
   const handleGenerate = async () => {
     const prompt = input.trim();
@@ -103,73 +130,34 @@ export default function GenerateScreen() {
         topArtists
       );
 
-      updateThinking(thinkingId, THINKING_MESSAGES[3]());
+      const artLookup = buildArtLookup(topTracks);
 
-      const [familiarResults, discoveryResults] = await Promise.all([
-        Promise.all(
-          (suggestions.familiar ?? []).map((q) =>
-            searchTracks(spotifyToken, q, 1).catch(() => [])
-          )
-        ),
-        Promise.all(
-          (suggestions.discoveries ?? []).map((q) =>
-            searchTracks(spotifyToken, q, 1).catch(() => [])
-          )
-        ),
-      ]);
+      const allSongNames = [
+        ...(suggestions.familiar ?? []),
+        ...(suggestions.discoveries ?? []),
+      ];
+      const songs: SongEntry[] = allSongNames.map((n) => ({
+        name: n,
+        albumArt: matchAlbumArt(n, artLookup),
+      }));
 
-      const familiarTracks = familiarResults.flat().filter(Boolean);
-      const discoveryTracks = discoveryResults.flat().filter(Boolean);
-
-      const seen = new Set<string>();
-      const dedup = (tracks: SpotifyTrack[]) =>
-        tracks.filter((t) => {
-          if (seen.has(t.id)) return false;
-          seen.add(t.id);
-          return true;
-        });
-
-      const familiar = dedup(familiarTracks);
-      const discoveries = dedup(discoveryTracks);
-
-      const queue: SpotifyTrack[] = [];
-      let fi = 0;
-      let di = 0;
-      let runningMs = 0;
-      const targetMaxMs = TARGET_MAX_MINUTES * 60000;
-
-      while (
-        runningMs < targetMaxMs &&
-        (fi < familiar.length || di < discoveries.length)
-      ) {
-        if (fi < familiar.length) {
-          queue.push(familiar[fi++]);
-          runningMs += queue[queue.length - 1].duration_ms;
-          if (runningMs >= targetMaxMs) break;
-        }
-        for (let n = 0; n < 2 && di < discoveries.length; n++) {
-          queue.push(discoveries[di++]);
-          runningMs += queue[queue.length - 1].duration_ms;
-          if (runningMs >= targetMaxMs) break;
-        }
-      }
-
-      const minutes = totalDurationMinutes(queue);
       const af = suggestions.audioFeatures;
       const moodLine = formatMoodSummary(af);
 
+      const msgId = (Date.now() + 2).toString();
       const assistantMsg: Message = {
-        id: (Date.now() + 2).toString(),
+        id: msgId,
         role: "assistant",
         text: `${suggestions.reasoning}\n\n${moodLine}`,
-        tracks: queue,
-        totalMinutes: minutes,
+        songs,
       };
 
       setMessages((prev) => {
         const filtered = prev.filter((m) => m.id !== thinkingId);
         return [...filtered, assistantMsg];
       });
+
+      fetchMissingArt(msgId, songs, spotifyToken);
     } catch (err: any) {
       const errorMsg: Message = {
         id: (Date.now() + 2).toString(),
@@ -185,13 +173,15 @@ export default function GenerateScreen() {
     }
   };
 
-  const renderTrack = (track: SpotifyTrack, index: number) => {
-    const albumArt = track.album.images[track.album.images.length - 1]?.url;
+  const renderSong = (song: SongEntry, index: number) => {
+    const parts = song.name.split(" - ");
+    const title = parts[0]?.trim() ?? song.name;
+    const artist = parts[1]?.trim();
     return (
-      <View style={styles.trackRow} key={track.id}>
+      <View style={styles.trackRow} key={`${song.name}-${index}`}>
         <Text style={styles.trackIndex}>{index + 1}</Text>
-        {albumArt ? (
-          <Image source={{ uri: albumArt }} style={styles.albumArt} />
+        {song.albumArt ? (
+          <Image source={{ uri: song.albumArt }} style={styles.albumArt} />
         ) : (
           <View style={styles.albumPlaceholder}>
             <FontAwesome name="music" size={14} color={theme.textMuted} />
@@ -199,15 +189,14 @@ export default function GenerateScreen() {
         )}
         <View style={styles.trackInfo}>
           <Text style={styles.trackName} numberOfLines={1}>
-            {track.name}
+            {title}
           </Text>
-          <Text style={styles.trackArtist} numberOfLines={1}>
-            {track.artists.map((a) => a.name).join(", ")}
-          </Text>
+          {artist && (
+            <Text style={styles.trackArtist} numberOfLines={1}>
+              {artist}
+            </Text>
+          )}
         </View>
-        <Text style={styles.trackDuration}>
-          {formatDuration(track.duration_ms)}
-        </Text>
       </View>
     );
   };
@@ -221,7 +210,7 @@ export default function GenerateScreen() {
       );
     }
 
-    const isThinking = generating && !item.tracks;
+    const isThinking = generating && !item.songs;
 
     return (
       <View style={styles.assistantSection}>
@@ -235,20 +224,14 @@ export default function GenerateScreen() {
           )}
           <Text style={styles.assistantText}>{item.text}</Text>
         </View>
-        {item.tracks && item.tracks.length > 0 && (
+        {item.songs && item.songs.length > 0 && (
           <View style={styles.trackList}>
-            {item.tracks.map((track, i) => renderTrack(track, i))}
+            {item.songs.map((song, i) => renderSong(song, i))}
             <View style={styles.queueFooter}>
               <View style={styles.queueStat}>
                 <FontAwesome name="music" size={11} color={theme.primary} />
                 <Text style={styles.queueStatText}>
-                  {item.tracks.length} tracks
-                </Text>
-              </View>
-              <View style={styles.queueStat}>
-                <FontAwesome name="clock-o" size={11} color={theme.primary} />
-                <Text style={styles.queueStatText}>
-                  ~{item.totalMinutes} min
+                  {item.songs.length} tracks
                 </Text>
               </View>
             </View>
@@ -340,6 +323,32 @@ export default function GenerateScreen() {
       </View>
     </KeyboardAvoidingView>
   );
+}
+
+function buildArtLookup(tracks: SpotifyTrack[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const t of tracks) {
+    const art = t.album.images[t.album.images.length - 1]?.url;
+    if (!art) continue;
+    const key = `${t.name} - ${t.artists[0]?.name}`.toLowerCase();
+    map.set(key, art);
+    map.set(t.name.toLowerCase(), art);
+  }
+  return map;
+}
+
+function matchAlbumArt(
+  songName: string,
+  lookup: Map<string, string>,
+): string | undefined {
+  const lower = songName.toLowerCase();
+  const exact = lookup.get(lower);
+  if (exact) return exact;
+
+  for (const [key, art] of lookup) {
+    if (lower.includes(key) || key.includes(lower)) return art;
+  }
+  return undefined;
 }
 
 function formatMoodSummary(af: {
@@ -531,12 +540,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: theme.textSecondary,
     marginTop: 2,
-  },
-  trackDuration: {
-    fontSize: 12,
-    color: theme.textMuted,
-    marginLeft: 8,
-    fontVariant: ["tabular-nums"],
   },
   queueFooter: {
     flexDirection: "row",

@@ -95,8 +95,8 @@ Audio feature guidelines:
 - tempo: BPM (60=slow ballad, 100=mid-tempo, 120=upbeat, 150+=fast)
 
 CRITICAL RULES:
-- "familiar": Pick 8-10 songs FROM the user's top tracks that fit the mood. Use EXACT song titles and artist names from their history.
-- "discoveries": Pick 15-20 songs the user has probably NEVER heard. Real songs on Spotify that match the mood. Artists the user does NOT already listen to. Include lesser-known tracks, indie gems, deep cuts. Do NOT repeat any artist from the user's top artists.
+- "familiar": Pick 5-6 songs FROM the user's top tracks that fit the mood. Use EXACT song titles and artist names from their history.
+- "discoveries": Pick 6-8 songs the user has probably NEVER heard. Real songs on Spotify that match the mood. Artists the user does NOT already listen to. Include lesser-known tracks, indie gems, deep cuts. Do NOT repeat any artist from the user's top artists.
 - All songs must be REAL tracks on Spotify.
 - Output ONLY the JSON object, nothing else.`;
 
@@ -107,48 +107,47 @@ User's top artists: ${artistContext}
 
 Generate a queue that matches this vibe. Reply with ONLY the JSON object.`;
 
-  const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
-    contents: userMessage,
-    config: {
-      systemInstruction: systemPrompt,
-      responseMimeType: "application/json",
-      thinkingConfig: { thinkingBudget: 0 },
-      temperature: 0.9,
-    },
-  });
+  const maxAttempts = 2;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: userMessage,
+      config: {
+        systemInstruction: systemPrompt,
+        responseMimeType: "application/json",
+        maxOutputTokens: 4096,
+        thinkingConfig: { thinkingBudget: 0 },
+        temperature: 0.9,
+      },
+    });
 
-  const raw = (response.text ?? "").trim();
+    const raw = (response.text ?? "").trim();
 
-  console.log("[Gemini] response length:", raw.length);
-  console.log("[Gemini] first 200 chars:", raw.substring(0, 200));
+    console.log(`[Gemini] attempt ${attempt + 1}, response length: ${raw.length}`);
+    console.log("[Gemini] first 200 chars:", raw.substring(0, 200));
 
-  if (!raw) {
-    throw new Error("Gemini returned an empty response");
-  }
+    if (!raw) continue;
 
-  // Strategy 1: direct parse (works when responseMimeType is respected)
-  try {
-    return JSON.parse(raw) as QueueSuggestion;
-  } catch (e) {
-    console.log("[Gemini] direct parse failed:", (e as Error).message);
-  }
-
-  // Strategy 2: extract JSON from markdown fences or prose
-  const jsonStr = extractJson(raw);
-  if (jsonStr) {
     try {
-      const sanitized = jsonStr
-        .replace(/,\s*}/g, "}")
-        .replace(/,\s*]/g, "]");
-      return JSON.parse(sanitized) as QueueSuggestion;
+      return JSON.parse(raw) as QueueSuggestion;
     } catch (e) {
-      console.log("[Gemini] extracted parse failed:", (e as Error).message);
-      console.log("[Gemini] extracted preview:", jsonStr.substring(0, 200));
+      console.log("[Gemini] direct parse failed:", (e as Error).message);
     }
+
+    const jsonStr = extractJson(raw);
+    if (jsonStr) {
+      try {
+        const sanitized = jsonStr
+          .replace(/,\s*}/g, "}")
+          .replace(/,\s*]/g, "]");
+        return JSON.parse(sanitized) as QueueSuggestion;
+      } catch (e) {
+        console.log("[Gemini] extracted parse failed:", (e as Error).message);
+      }
+    }
+
+    console.log("[Gemini] retrying…");
   }
 
-  throw new Error(
-    `Could not parse Gemini response. Starts with: "${raw.substring(0, 100)}"`
-  );
+  throw new Error("Gemini failed to return valid JSON after retries");
 }
