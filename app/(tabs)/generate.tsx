@@ -1,14 +1,13 @@
 import { Text, View } from "@/components/Themed";
 import { theme } from "@/constants/Colors";
 import { useAuth } from "@/lib/AuthContext";
-import { getLikedTracks } from "@/lib/spotify";
 import {
   adjustQueueSuggestions,
   generateQueueSuggestions,
   generateReplacementSong,
 } from "@/lib/gemini";
 import { getSavedIds, saveQueue } from "@/lib/queueStorage";
-import { addToQueue, searchTracks, type SpotifyTrack } from "@/lib/spotify";
+import { addToQueue, getLikedTracks, searchTracks, type SpotifyTrack } from "@/lib/spotify";
 import { FontAwesome } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect } from "expo-router";
@@ -490,6 +489,13 @@ export default function GenerateScreen() {
         });
       }, 2000);
     }
+  };
+
+  const openSaveModal = (msg: Message) => {
+    if (!msg.songs || !msg.prompt || msg.saved) return;
+    setSaveTitle(msg.prompt);
+    setSaveCoverImage(null);
+    setSaveModalMsg(msg);
   };
 
   const handleAddAllToQueue = async (msg: Message) => {
