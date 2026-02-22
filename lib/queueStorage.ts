@@ -6,6 +6,8 @@ export type SavedQueue = {
   id: string;
   prompt: string;
   moodLine: string;
+  title: string;
+  coverImage?: string;
   songs: { name: string; albumArt?: string }[];
   savedAt: number;
 };
@@ -31,4 +33,14 @@ export async function deleteQueue(id: string): Promise<void> {
   const existing = await loadQueues();
   const filtered = existing.filter((q) => q.id !== id);
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+}
+
+export async function queueExists(id: string): Promise<boolean> {
+  const queues = await loadQueues();
+  return queues.some((q) => q.id === id);
+}
+
+export async function getSavedIds(): Promise<Set<string>> {
+  const queues = await loadQueues();
+  return new Set(queues.map((q) => q.id));
 }

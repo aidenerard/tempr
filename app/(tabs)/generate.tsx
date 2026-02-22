@@ -8,11 +8,13 @@ import {
   KeyboardAvoidingView,
   Platform,
   Dimensions,
+  Modal,
 } from "react-native";
 import { Text, View } from "@/components/Themed";
 import { useState, useRef, useCallback } from "react";
 import { FontAwesome } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   useSharedValue,
@@ -40,7 +42,7 @@ import {
   generateReplacementSong,
   adjustQueueSuggestions,
 } from "@/lib/gemini";
-import { saveQueue } from "@/lib/queueStorage";
+import { saveQueue, getSavedIds } from "@/lib/queueStorage";
 
 type SongEntry = {
   name: string;
@@ -158,7 +160,29 @@ export default function GenerateScreen() {
     base64: string;
   } | null>(null);
 
+  const [saveModalMsg, setSaveModalMsg] = useState<Message | null>(null);
+  const [saveTitle, setSaveTitle] = useState("");
+  const [saveCoverImage, setSaveCoverImage] = useState<string | null>(null);
+
   const hasQueue = messages.some((m) => m.songs && m.songs.length > 0);
+
+  useFocusEffect(
+    useCallback(() => {
+      getSavedIds().then((savedIds) => {
+        setMessages((prev) => {
+          let changed = false;
+          const updated = prev.map((m) => {
+            if (m.saved && !savedIds.has(m.id)) {
+              changed = true;
+              return { ...m, saved: false };
+            }
+            return m;
+          });
+          return changed ? updated : prev;
+        });
+      });
+    }, []),
+  );
 
   const updateThinking = useCallback((id: string, text: string) => {
     setMessages((prev) =>
@@ -478,18 +502,43 @@ export default function GenerateScreen() {
     }
   };
 
-  const handleSave = async (msg: Message) => {
+  const openSaveModal = (msg: Message) => {
     if (!msg.songs || !msg.prompt || msg.saved) return;
+    setSaveTitle(msg.prompt);
+    setSaveCoverImage(null);
+    setSaveModalMsg(msg);
+  };
+
+  const handlePickCoverImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 0.7,
+    });
+    if (!result.canceled && result.assets[0]) {
+      setSaveCoverImage(result.assets[0].uri);
+    }
+  };
+
+  const handleConfirmSave = async () => {
+    if (!saveModalMsg?.songs || !saveModalMsg.prompt) return;
     await saveQueue({
-      id: msg.id,
-      prompt: msg.prompt,
-      moodLine: msg.moodLine ?? "",
-      songs: msg.songs.map((s) => ({ name: s.name, albumArt: s.albumArt })),
+      id: saveModalMsg.id,
+      prompt: saveModalMsg.prompt,
+      moodLine: saveModalMsg.moodLine ?? "",
+      title: saveTitle.trim() || saveModalMsg.prompt,
+      coverImage: saveCoverImage ?? undefined,
+      songs: saveModalMsg.songs.map((s) => ({
+        name: s.name,
+        albumArt: s.albumArt,
+      })),
       savedAt: Date.now(),
     });
     setMessages((prev) =>
-      prev.map((m) => (m.id === msg.id ? { ...m, saved: true } : m)),
+      prev.map((m) =>
+        m.id === saveModalMsg.id ? { ...m, saved: true } : m,
+      ),
     );
+    setSaveModalMsg(null);
   };
 
   const handleRemoveSong = useCallback(
@@ -684,11 +733,11 @@ export default function GenerateScreen() {
                 item.saved && styles.saveButtonSaved,
                 pressed && !item.saved && styles.saveButtonPressed,
               ]}
-              onPress={() => handleSave(item)}
+              onPress={() => openSaveModal(item)}
               disabled={item.saved}
             >
               <FontAwesome
-                name={item.saved ? "check" : "bookmark-o"}
+                name={item.saved ? "check" : "heart-o"}
                 size={14}
                 color={item.saved ? theme.success : theme.primary}
               />
@@ -698,7 +747,7 @@ export default function GenerateScreen() {
                   item.saved && styles.saveButtonTextSaved,
                 ]}
               >
-                {item.saved ? "Saved to Library" : "Save to Library"}
+                {item.saved ? "Saved" : "Save to Memories"}
               </Text>
             </Pressable>
           </>
@@ -829,6 +878,77 @@ export default function GenerateScreen() {
           )}
         </Pressable>
       </View>
+
+      <Modal
+        visible={!!saveModalMsg}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSaveModalMsg(null)}
+      >
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setSaveModalMsg(null)}
+        >
+          <Pressable style={styles.modalContent} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Save to Memories</Text>
+
+            <Text style={styles.modalLabel}>Title</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={saveTitle}
+              onChangeText={setSaveTitle}
+              placeholder="Name this memory..."
+              placeholderTextColor={theme.textMuted}
+              autoFocus
+            />
+
+            <Text style={styles.modalLabel}>Cover Image</Text>
+            <Pressable
+              style={styles.coverPickerButton}
+              onPress={handlePickCoverImage}
+            >
+              {saveCoverImage ? (
+                <Image
+                  source={{ uri: saveCoverImage }}
+                  style={styles.coverPreview}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.coverPlaceholder}>
+                  <FontAwesome
+                    name="camera"
+                    size={24}
+                    color={theme.textMuted}
+                  />
+                  <Text style={styles.coverPlaceholderText}>Add a photo</Text>
+                </View>
+              )}
+            </Pressable>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalCancelButton,
+                  pressed && { opacity: 0.7 },
+                ]}
+                onPress={() => setSaveModalMsg(null)}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalSaveButton,
+                  pressed && { opacity: 0.7 },
+                ]}
+                onPress={handleConfirmSave}
+              >
+                <FontAwesome name="heart" size={14} color="#fff" />
+                <Text style={styles.modalSaveText}>Save</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -1251,5 +1371,107 @@ const styles = StyleSheet.create({
     height: 160,
     borderRadius: 12,
     marginBottom: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  modalContent: {
+    width: "100%",
+    backgroundColor: theme.surface,
+    borderRadius: 20,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: theme.text,
+    marginBottom: 20,
+    textAlign: "center",
+    letterSpacing: -0.3,
+  },
+  modalLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: theme.textSecondary,
+    marginBottom: 8,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  modalInput: {
+    backgroundColor: theme.bg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: theme.text,
+    marginBottom: 20,
+  },
+  coverPickerButton: {
+    marginBottom: 24,
+    borderRadius: 14,
+    overflow: "hidden",
+  },
+  coverPreview: {
+    width: "100%",
+    height: 160,
+    borderRadius: 14,
+  },
+  coverPlaceholder: {
+    height: 120,
+    backgroundColor: theme.bg,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  coverPlaceholderText: {
+    fontSize: 13,
+    color: theme.textMuted,
+    fontWeight: "500",
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  modalCancelButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: theme.bg,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalCancelText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: theme.textSecondary,
+  },
+  modalSaveButton: {
+    flex: 1,
+    flexDirection: "row",
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: theme.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  modalSaveText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#fff",
   },
 });
