@@ -200,6 +200,7 @@ export default function DiscoverScreen() {
     const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
     const [currentIndex, setCurrentIndex] = useState(0);
     const [initialLoading, setInitialLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
 
@@ -211,12 +212,15 @@ export default function DiscoverScreen() {
     }, [spotifyToken]);
 
     async function loadFeed(token: string) {
+        console.log("[Discover] loadFeed called, token length:", token?.length, "first10:", token?.slice(0, 10));
         try {
             setInitialLoading(true);
             setError(null);
 
+            console.log("[Discover] calling getTrendingTracks...");
             const tracks = await getTrendingTracks(token, 10);
-            console.log("[Discover] trending tracks:", tracks.map((t) => `${t.name} - ${t.artists[0]?.name}`));
+            console.log("[Discover] getTrendingTracks returned", tracks.length, "tracks");
+            console.log("[Discover] tracks:", tracks.map((t) => `${t.name} - ${t.artists[0]?.name}`));
 
             const items: FeedItem[] = tracks.map((track) => ({
                 track,
@@ -248,7 +252,9 @@ export default function DiscoverScreen() {
             });
         } catch (e: any) {
             const msg: string = e?.message ?? "";
-            console.error("[Discover] loadFeed error:", msg);
+            console.error("[Discover] loadFeed caught error:", e);
+            console.error("[Discover] error message:", msg);
+            console.error("[Discover] error stack:", e?.stack);
             if (msg.toLowerCase().includes("expired") || msg.toLowerCase().includes("401")) {
                 const refreshed = await refreshSpotifyToken();
                 if (!refreshed) await signOut();
@@ -256,6 +262,43 @@ export default function DiscoverScreen() {
             }
             setError(msg || "Failed to load feed");
             setInitialLoading(false);
+        }
+    }
+
+    async function loadMore() {
+        if (!spotifyToken || loadingMore) return;
+        setLoadingMore(true);
+        try {
+            const tracks = await getTrendingTracks(spotifyToken, 10);
+            const startIndex = feedItems.length;
+            const newItems: FeedItem[] = tracks.map((track) => ({
+                track,
+                match: null,
+                matchLoading: true,
+            }));
+            setFeedItems((prev) => [...prev, ...newItems]);
+
+            tracks.forEach((track, i) => {
+                findMusicVideo(track, spotifyToken)
+                    .then((match) => {
+                        setFeedItems((prev) => {
+                            const next = [...prev];
+                            next[startIndex + i] = { ...next[startIndex + i], match, matchLoading: false };
+                            return next;
+                        });
+                    })
+                    .catch(() => {
+                        setFeedItems((prev) => {
+                            const next = [...prev];
+                            next[startIndex + i] = { ...next[startIndex + i], match: null, matchLoading: false };
+                            return next;
+                        });
+                    });
+            });
+        } catch (e: any) {
+            console.warn("[Discover] loadMore error:", e.message);
+        } finally {
+            setLoadingMore(false);
         }
     }
 
@@ -315,6 +358,16 @@ export default function DiscoverScreen() {
                         offset: containerSize.height * index,
                         index,
                     })}
+                    onEndReached={loadMore}
+                    onEndReachedThreshold={0.5}
+                    ListFooterComponent={
+                        loadingMore ? (
+                            <View style={[styles.center, { width: containerSize.width, height: containerSize.height }]}>
+                                <ActivityIndicator size="large" color={theme.primary} />
+                                <Text style={styles.loadingText}>Loading more…</Text>
+                            </View>
+                        ) : null
+                    }
                 />
             )}
         </View>

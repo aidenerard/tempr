@@ -3,13 +3,16 @@ import type { AudioFeatureTargets } from "./gemini";
 const SPOTIFY_BASE = "https://api.spotify.com/v1";
 
 async function spotifyFetch(endpoint: string, token: string): Promise<any> {
-    const res = await fetch(`${SPOTIFY_BASE}${endpoint}`, {
+    const url = `${SPOTIFY_BASE}${endpoint}`;
+    const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` },
     });
 
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error?.message || `Spotify API error: ${res.status}`);
+        const msg = err.error?.message || `Spotify API error: ${res.status}`;
+        console.error(`[Spotify] ${res.status} on ${url} —`, msg);
+        throw new Error(msg);
     }
     return res.json();
 }
@@ -135,32 +138,26 @@ export async function getArtistTopTracks(
     return data.tracks ?? [];
 }
 
-// Well-known Spotify editorial playlists — public, no special permissions needed
-const TRENDING_PLAYLIST_IDS = [
-    "37i9dQZEVXbMDoHDwVN2tF", // Global Top 50
-    "37i9dQZF1DXcBWIGoYBM5M", // Today's Top Hits
-    "37i9dQZF1DX0kbJZpiYdZl", // Hot Hits USA
-    "37i9dQZF1DX4JAvHpjipBk", // New Music Friday
-    "37i9dQZEVXbLiRSasKsNU9", // Viral 50 Global
-];
-
 export async function getTrendingTracks(
     token: string,
     limit = 10,
 ): Promise<SpotifyTrack[]> {
-    // Pick a random playlist and a random starting offset for variety each call
-    const playlistId = TRENDING_PLAYLIST_IDS[Math.floor(Math.random() * TRENDING_PLAYLIST_IDS.length)];
-    const offset = Math.floor(Math.random() * 40);
+    const [short, medium, long] = await Promise.all([
+        getTopTracks(token, 50, "short_term"),
+        getTopTracks(token, 50, "medium_term"),
+        getTopTracks(token, 50, "long_term"),
+    ]);
 
-    const fields = "items(track(id,name,artists,album,uri,preview_url,duration_ms))";
-    const data = await spotifyFetch(
-        `/playlists/${playlistId}/tracks?limit=${limit}&offset=${offset}&fields=${encodeURIComponent(fields)}`,
-        token,
-    );
+    const seen = new Set<string>();
+    const pool: SpotifyTrack[] = [];
+    for (const t of [...short, ...medium, ...long]) {
+        if (!seen.has(t.id)) {
+            seen.add(t.id);
+            pool.push(t);
+        }
+    }
 
-    return (data.items ?? [])
-        .map((item: any) => item.track)
-        .filter((t: any) => t?.id);
+    return pool.sort(() => Math.random() - 0.5).slice(0, limit);
 }
 
 export async function addToQueue(

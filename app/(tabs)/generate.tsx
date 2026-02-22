@@ -88,14 +88,14 @@ export default function GenerateScreen() {
     setGenerating(true);
 
     try {
-      updateThinking(thinkingId, THINKING_MESSAGES[1]());
+      updateThinking(thinkingId, THINKING_MESSAGES[1](""));
 
       const [topTracks, topArtists] = await Promise.all([
         getTopTracks(spotifyToken, 20),
         getTopArtists(spotifyToken, 15),
       ]);
 
-      updateThinking(thinkingId, THINKING_MESSAGES[2]());
+      updateThinking(thinkingId, THINKING_MESSAGES[2](""));
 
       const suggestions = await generateQueueSuggestions(
         prompt,
@@ -103,7 +103,7 @@ export default function GenerateScreen() {
         topArtists
       );
 
-      updateThinking(thinkingId, THINKING_MESSAGES[3]());
+      updateThinking(thinkingId, THINKING_MESSAGES[3](""));
 
       const [familiarResults, discoveryResults] = await Promise.all([
         Promise.all(
