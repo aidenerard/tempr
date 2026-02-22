@@ -1,45 +1,146 @@
-import {
-  StyleSheet,
-  TextInput,
-  Pressable,
-  FlatList,
-  Image,
-  ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-} from "react-native";
 import { Text, View } from "@/components/Themed";
-import { useState, useRef, useCallback } from "react";
-import { FontAwesome } from "@expo/vector-icons";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useAuth } from "@/lib/AuthContext";
 import { theme } from "@/constants/Colors";
+import { useAuth } from "@/lib/AuthContext";
 import {
-  getTopTracks,
+  adjustQueueSuggestions,
+  generateQueueSuggestions,
+  generateReplacementSong,
+} from "@/lib/gemini";
+import { getSavedIds, saveQueue } from "@/lib/queueStorage";
+import {
+  addToQueue,
+  getLikedTracks,
   getTopArtists,
+  getTopTracks,
   searchTracks,
-  formatDuration,
-  totalDurationMinutes,
   type SpotifyTrack,
 } from "@/lib/spotify";
-import { generateQueueSuggestions } from "@/lib/gemini";
+import { FontAwesome } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker";
+import { useFocusEffect } from "expo-router";
+import { useCallback, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Dimensions,
+  FlatList,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  StyleSheet,
+  TextInput,
+} from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, {
+  Easing,
+  Extrapolation,
+  interpolate,
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  withTiming,
+} from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const TARGET_MAX_MINUTES = 45;
+type SongEntry = {
+  name: string;
+  albumArt?: string;
+  uri?: string;
+};
 
 type Message = {
   id: string;
   role: "user" | "assistant";
   text: string;
-  tracks?: SpotifyTrack[];
-  totalMinutes?: number;
+  songs?: SongEntry[];
+  prompt?: string;
+  moodLine?: string;
+  saved?: boolean;
+  imageUri?: string;
 };
 
-const THINKING_MESSAGES = [
-  (prompt: string) => `Creating a queue for "${prompt}"...`,
-  () => "Analyzing your listening history...",
-  () => "Mapping the mood to audio features...",
-  () => "Picking the perfect tracks...",
-];
+const SCREEN_WIDTH = Dimensions.get("window").width;
+const SWIPE_THRESHOLD = -SCREEN_WIDTH * 0.35;
+
+function SwipeableTrackRow({
+  children,
+  onRemove,
+}: {
+  children: React.ReactNode;
+  onRemove: () => void;
+}) {
+  const translateX = useSharedValue(0);
+  const rowHeight = useSharedValue(0);
+  const removing = useSharedValue(false);
+  const measured = useRef(false);
+
+  const panGesture = Gesture.Pan()
+    .activeOffsetX(-10)
+    .failOffsetY([-15, 15])
+    .onUpdate((e) => {
+      if (removing.value) return;
+      translateX.value = Math.min(0, e.translationX);
+    })
+    .onEnd(() => {
+      if (removing.value) return;
+      if (translateX.value < SWIPE_THRESHOLD) {
+        removing.value = true;
+        translateX.value = withTiming(
+          -SCREEN_WIDTH,
+          { duration: 250, easing: Easing.out(Easing.cubic) },
+          (done) => {
+            if (!done) return;
+            rowHeight.value = withTiming(0, { duration: 300 }, (done2) => {
+              if (done2) runOnJS(onRemove)();
+            });
+          },
+        );
+      } else {
+        translateX.value = withSpring(0, { damping: 20, stiffness: 200 });
+      }
+    });
+
+  const slideStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
+
+  const wrapperStyle = useAnimatedStyle(() => {
+    if (!removing.value) return {};
+    return { height: rowHeight.value, overflow: "hidden" as const };
+  });
+
+  const bgStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(
+      translateX.value,
+      [0, -80],
+      [0, 1],
+      Extrapolation.CLAMP,
+    ),
+  }));
+
+  return (
+    <Animated.View
+      style={wrapperStyle}
+      onLayout={(e) => {
+        if (!measured.current) {
+          measured.current = true;
+          rowHeight.value = e.nativeEvent.layout.height;
+        }
+      }}
+    >
+      <Animated.View style={[styles.deleteBackground, bgStyle]}>
+        <FontAwesome name="trash" size={18} color="#fff" />
+      </Animated.View>
+      <GestureDetector gesture={panGesture}>
+        <Animated.View style={[{ backgroundColor: theme.surface }, slideStyle]}>
+          {children}
+        </Animated.View>
+      </GestureDetector>
+    </Animated.View>
+  );
+}
 
 export default function GenerateScreen() {
   const { spotifyToken } = useAuth();
@@ -48,16 +149,124 @@ export default function GenerateScreen() {
   const [input, setInput] = useState("");
   const [generating, setGenerating] = useState(false);
   const flatListRef = useRef<FlatList>(null);
+  const [queuedSongs, setQueuedSongs] = useState<
+    Record<string, "queuing" | "queued" | "error">
+  >({});
+
+  const likedTracksRef = useRef<SpotifyTrack[] | null>(null);
+  const [selectedImage, setSelectedImage] = useState<{
+    uri: string;
+    base64: string;
+  } | null>(null);
+
+  const [saveModalMsg, setSaveModalMsg] = useState<Message | null>(null);
+  const [saveTitle, setSaveTitle] = useState("");
+  const [saveCoverImage, setSaveCoverImage] = useState<string | null>(null);
+
+  const hasQueue = messages.some((m) => m.songs && m.songs.length > 0);
+
+  useFocusEffect(
+    useCallback(() => {
+      getSavedIds().then((savedIds) => {
+        setMessages((prev) => {
+          let changed = false;
+          const updated = prev.map((m) => {
+            if (m.saved && !savedIds.has(m.id)) {
+              changed = true;
+              return { ...m, saved: false };
+            }
+            return m;
+          });
+          return changed ? updated : prev;
+        });
+      });
+    }, []),
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      getSavedIds().then((savedIds) => {
+        setMessages((prev) => {
+          let changed = false;
+          const updated = prev.map((m) => {
+            if (m.saved && !savedIds.has(m.id)) {
+              changed = true;
+              return { ...m, saved: false };
+            }
+            return m;
+          });
+          return changed ? updated : prev;
+        });
+      });
+    }, []),
+  );
 
   const updateThinking = useCallback((id: string, text: string) => {
-    setMessages((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, text } : m))
-    );
+    setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, text } : m)));
   }, []);
+
+  const ensureSpotifyData = async () => {
+    if (!spotifyToken) return { likedTracks: [] as SpotifyTrack[] };
+    if (likedTracksRef.current) return { likedTracks: likedTracksRef.current };
+    const likedTracks = await getLikedTracks(spotifyToken, 200);
+    likedTracksRef.current = likedTracks;
+    return { likedTracks };
+  };
+
+  const handlePickImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 0.7,
+      base64: true,
+    });
+    if (!result.canceled && result.assets[0]?.base64) {
+      setSelectedImage({
+        uri: result.assets[0].uri,
+        base64: result.assets[0].base64,
+      });
+    }
+  };
+
+  const fetchMissingArt = useCallback(
+    async (msgId: string, songs: SongEntry[], token: string) => {
+      const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      await wait(10000);
+
+      for (let i = 0; i < songs.length; i++) {
+        if (songs[i].albumArt) continue;
+        try {
+          const results = await searchTracks(token, songs[i].name, 1);
+          const match = results[0];
+          const art = match?.album.images[match.album.images.length - 1]?.url;
+          if (match) {
+            setMessages((prev) =>
+              prev.map((m) => {
+                if (m.id !== msgId || !m.songs) return m;
+                const updated = [...m.songs];
+                updated[i] = {
+                  ...updated[i],
+                  albumArt: art,
+                  uri: match.uri,
+                };
+                return { ...m, songs: updated };
+              }),
+            );
+          }
+        } catch {
+          await wait(10000);
+          i--;
+          continue;
+        }
+        await wait(3000);
+      }
+    },
+    [],
+  );
 
   const handleGenerate = async () => {
     const prompt = input.trim();
-    if (!prompt || generating) return;
+    const imageData = selectedImage;
+    if ((!prompt && !imageData) || generating) return;
 
     if (!spotifyToken) {
       const errorMsg: Message = {
@@ -74,102 +283,67 @@ export default function GenerateScreen() {
     const userMsg: Message = {
       id: Date.now().toString(),
       role: "user",
-      text: prompt,
+      text: prompt || "Generate from this image",
+      imageUri: imageData?.uri,
     };
-
+    const displayPrompt = prompt || "image mood";
     const thinkingId = (Date.now() + 1).toString();
     const thinkingMsg: Message = {
       id: thinkingId,
       role: "assistant",
-      text: THINKING_MESSAGES[0](prompt),
+      text: `Creating a queue for "${displayPrompt}"...`,
     };
 
     setMessages((prev) => [...prev, userMsg, thinkingMsg]);
+    setSelectedImage(null);
     setGenerating(true);
 
     try {
-      updateThinking(thinkingId, THINKING_MESSAGES[1](""));
+      updateThinking(thinkingId, "Loading your liked songs...");
+      const { likedTracks } = await ensureSpotifyData();
 
-      const [topTracks, topArtists] = await Promise.all([
-        getTopTracks(spotifyToken, 20),
-        getTopArtists(spotifyToken, 15),
-      ]);
-
-      updateThinking(thinkingId, THINKING_MESSAGES[2](""));
-
+      updateThinking(
+        thinkingId,
+        imageData
+          ? "Analyzing the mood of your image..."
+          : "Mapping the mood to audio features...",
+      );
       const suggestions = await generateQueueSuggestions(
         prompt,
-        topTracks,
-        topArtists
+        likedTracks,
+        imageData?.base64,
       );
 
-      updateThinking(thinkingId, THINKING_MESSAGES[3](""));
+      updateThinking(thinkingId, "Picking the perfect tracks...");
+      const artLookup = buildArtLookup(likedTracks);
+      const uriLookup = buildUriLookup(likedTracks);
 
-      const [familiarResults, discoveryResults] = await Promise.all([
-        Promise.all(
-          (suggestions.familiar ?? []).map((q) =>
-            searchTracks(spotifyToken, q, 1).catch(() => [])
-          )
-        ),
-        Promise.all(
-          (suggestions.discoveries ?? []).map((q) =>
-            searchTracks(spotifyToken, q, 1).catch(() => [])
-          )
-        ),
-      ]);
+      const allSongNames = [...(suggestions.familiar ?? [])];
+      const songs: SongEntry[] = allSongNames.map((n) => ({
+        name: n,
+        albumArt: matchAlbumArt(n, artLookup),
+        uri: matchTrackUri(n, uriLookup),
+      }));
 
-      const familiarTracks = familiarResults.flat().filter(Boolean);
-      const discoveryTracks = discoveryResults.flat().filter(Boolean);
-
-      const seen = new Set<string>();
-      const dedup = (tracks: SpotifyTrack[]) =>
-        tracks.filter((t) => {
-          if (seen.has(t.id)) return false;
-          seen.add(t.id);
-          return true;
-        });
-
-      const familiar = dedup(familiarTracks);
-      const discoveries = dedup(discoveryTracks);
-
-      const queue: SpotifyTrack[] = [];
-      let fi = 0;
-      let di = 0;
-      let runningMs = 0;
-      const targetMaxMs = TARGET_MAX_MINUTES * 60000;
-
-      while (
-        runningMs < targetMaxMs &&
-        (fi < familiar.length || di < discoveries.length)
-      ) {
-        if (fi < familiar.length) {
-          queue.push(familiar[fi++]);
-          runningMs += queue[queue.length - 1].duration_ms;
-          if (runningMs >= targetMaxMs) break;
-        }
-        for (let n = 0; n < 2 && di < discoveries.length; n++) {
-          queue.push(discoveries[di++]);
-          runningMs += queue[queue.length - 1].duration_ms;
-          if (runningMs >= targetMaxMs) break;
-        }
-      }
-
-      const minutes = totalDurationMinutes(queue);
       const af = suggestions.audioFeatures;
       const moodLine = formatMoodSummary(af);
 
+      const msgId = (Date.now() + 2).toString();
       const assistantMsg: Message = {
-        id: (Date.now() + 2).toString(),
+        id: msgId,
         role: "assistant",
         text: `${suggestions.reasoning}\n\n${moodLine}`,
-        tracks: queue,
-        totalMinutes: minutes,
+        songs,
+        prompt: displayPrompt,
+        moodLine,
       };
 
       setMessages((prev) => {
         const filtered = prev.filter((m) => m.id !== thinkingId);
         return [...filtered, assistantMsg];
       });
+
+      fetchMissingArt(msgId, songs, spotifyToken);
     } catch (err: any) {
       const errorMsg: Message = {
         id: (Date.now() + 2).toString(),
@@ -185,30 +359,352 @@ export default function GenerateScreen() {
     }
   };
 
-  const renderTrack = (track: SpotifyTrack, index: number) => {
-    const albumArt = track.album.images[track.album.images.length - 1]?.url;
+  const handleAdjust = async () => {
+    const adjustment = input.trim();
+    if (!adjustment || generating) return;
+
+    const latestQueue = [...messages]
+      .reverse()
+      .find((m) => m.songs && m.songs.length > 0);
+    if (!latestQueue?.songs || !latestQueue.prompt) return;
+
+    if (!spotifyToken) {
+      const errorMsg: Message = {
+        id: Date.now().toString(),
+        role: "assistant",
+        text: "Spotify isn't connected. Head to Profile and reconnect.",
+      };
+      setMessages((prev) => [...prev, errorMsg]);
+      return;
+    }
+
+    setInput("");
+
+    const userMsg: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      text: adjustment,
+    };
+    const thinkingId = (Date.now() + 1).toString();
+    const thinkingMsg: Message = {
+      id: thinkingId,
+      role: "assistant",
+      text: `Adjusting queue: "${adjustment}"...`,
+    };
+
+    setMessages((prev) => [...prev, userMsg, thinkingMsg]);
+    setGenerating(true);
+
+    try {
+      updateThinking(thinkingId, "Re-evaluating song fit...");
+      const { likedTracks } = await ensureSpotifyData();
+      const currentSongNames = latestQueue.songs.map((s) => s.name);
+
+      updateThinking(thinkingId, "Finding better matches...");
+      const result = await adjustQueueSuggestions(
+        currentSongNames,
+        latestQueue.prompt,
+        adjustment,
+        likedTracks,
+      );
+
+      const removeSet = new Set(result.remove.map((r) => r.toLowerCase()));
+      const keptSongs = latestQueue.songs.filter(
+        (s) => !removeSet.has(s.name.toLowerCase()),
+      );
+
+      const artLookup = buildArtLookup(likedTracks);
+      const uriLookup = buildUriLookup(likedTracks);
+      const newSongs: SongEntry[] = result.additions.map((n) => ({
+        name: n,
+        albumArt: matchAlbumArt(n, artLookup),
+        uri: matchTrackUri(n, uriLookup),
+      }));
+
+      const combinedSongs = [...keptSongs, ...newSongs];
+      const updatedPrompt = `${latestQueue.prompt} → ${adjustment}`;
+      const af = result.audioFeatures;
+      const moodLine = formatMoodSummary(af);
+
+      const msgId = (Date.now() + 2).toString();
+      const assistantMsg: Message = {
+        id: msgId,
+        role: "assistant",
+        text: `${result.reasoning}\n\n${moodLine}`,
+        songs: combinedSongs,
+        prompt: updatedPrompt,
+        moodLine,
+      };
+
+      setMessages((prev) => {
+        const filtered = prev.filter((m) => m.id !== thinkingId);
+        return [...filtered, assistantMsg];
+      });
+
+      fetchMissingArt(msgId, newSongs, spotifyToken);
+    } catch (err: any) {
+      const errorMsg: Message = {
+        id: (Date.now() + 2).toString(),
+        role: "assistant",
+        text: `Adjustment failed: ${err.message}`,
+      };
+      setMessages((prev) => {
+        const filtered = prev.filter((m) => m.id !== thinkingId);
+        return [...filtered, errorMsg];
+      });
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleSubmit = () => {
+    if (hasQueue) {
+      handleAdjust();
+    } else {
+      handleGenerate();
+    }
+  };
+
+  const handleNew = () => {
+    setMessages([]);
+    setQueuedSongs({});
+    setInput("");
+    setSelectedImage(null);
+    likedTracksRef.current = null;
+  };
+
+  const handleAddToQueue = async (
+    song: SongEntry,
+    index: number,
+    msgId: string,
+  ) => {
+    if (!spotifyToken || !song.uri) return;
+    const key = `${msgId}-${index}`;
+    if (queuedSongs[key]) return;
+
+    setQueuedSongs((prev) => ({ ...prev, [key]: "queuing" }));
+    try {
+      await addToQueue(spotifyToken, song.uri);
+      setQueuedSongs((prev) => ({ ...prev, [key]: "queued" }));
+    } catch {
+      setQueuedSongs((prev) => ({ ...prev, [key]: "error" }));
+      setTimeout(() => {
+        setQueuedSongs((prev) => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+      }, 2000);
+    }
+  };
+
+  const openSaveModal = (msg: Message) => {
+    if (!msg.songs || !msg.prompt || msg.saved) return;
+    setSaveTitle(msg.prompt);
+    setSaveCoverImage(null);
+    setSaveModalMsg(msg);
+  };
+
+  const handleAddAllToQueue = async (msg: Message) => {
+    if (!spotifyToken || !msg.songs) return;
+    const queuable = msg.songs
+      .map((s, i) => ({ song: s, index: i }))
+      .filter(
+        ({ song, index }) => song.uri && !queuedSongs[`${msg.id}-${index}`],
+      );
+    if (queuable.length === 0) return;
+
+    const keys = queuable.map(({ index }) => `${msg.id}-${index}`);
+    setQueuedSongs((prev) => {
+      const next = { ...prev };
+      keys.forEach((k) => (next[k] = "queuing"));
+      return next;
+    });
+
+    for (const { song, index } of queuable) {
+      const key = `${msg.id}-${index}`;
+      try {
+        await addToQueue(spotifyToken, song.uri!);
+        setQueuedSongs((prev) => ({ ...prev, [key]: "queued" }));
+      } catch {
+        setQueuedSongs((prev) => ({ ...prev, [key]: "error" }));
+        setTimeout(() => {
+          setQueuedSongs((prev) => {
+            const next = { ...prev };
+            delete next[key];
+            return next;
+          });
+        }, 2000);
+      }
+    }
+  };
+
+  const handleSave = async (msg: Message) => {
+    if (!msg.songs || !msg.prompt || msg.saved) return;
+    setSaveTitle(msg.prompt);
+    setSaveCoverImage(null);
+    setSaveModalMsg(msg);
+  };
+
+  const handlePickCoverImage = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images"],
+      quality: 0.7,
+    });
+    if (!result.canceled && result.assets[0]) {
+      setSaveCoverImage(result.assets[0].uri);
+    }
+  };
+
+  const handleConfirmSave = async () => {
+    if (!saveModalMsg?.songs || !saveModalMsg.prompt) return;
+    await saveQueue({
+      id: saveModalMsg.id,
+      prompt: saveModalMsg.prompt,
+      moodLine: saveModalMsg.moodLine ?? "",
+      title: saveTitle.trim() || saveModalMsg.prompt,
+      coverImage: saveCoverImage ?? undefined,
+      songs: saveModalMsg.songs.map((s) => ({
+        name: s.name,
+        albumArt: s.albumArt,
+      })),
+      savedAt: Date.now(),
+    });
+    setMessages((prev) =>
+      prev.map((m) => (m.id === saveModalMsg.id ? { ...m, saved: true } : m)),
+    );
+    setSaveModalMsg(null);
+  };
+
+  const handleRemoveSong = useCallback(
+    async (msgId: string, songName: string) => {
+      let prompt = "";
+      let remainingSongNames: string[] = [];
+
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.id !== msgId || !m.songs) return m;
+          prompt = m.prompt ?? "";
+          let removed = false;
+          const updatedSongs = m.songs.filter((s) => {
+            if (!removed && s.name === songName) {
+              removed = true;
+              return false;
+            }
+            return true;
+          });
+          remainingSongNames = updatedSongs.map((s) => s.name);
+          return { ...m, songs: updatedSongs };
+        }),
+      );
+
+      if (!prompt) return;
+
+      try {
+        const removedLower = songName.toLowerCase();
+        const excludeSet = new Set([
+          removedLower,
+          ...remainingSongNames.map((n) => n.toLowerCase()),
+        ]);
+        const likedTrackNames = (likedTracksRef.current ?? [])
+          .map((t) => `${t.name} - ${t.artists[0]?.name ?? "Unknown"}`)
+          .filter((n) => !excludeSet.has(n.toLowerCase()));
+        const newSongName = await generateReplacementSong(
+          remainingSongNames,
+          prompt,
+          likedTrackNames,
+        );
+
+        if (newSongName.toLowerCase() === removedLower) return;
+
+        const cachedTracks = likedTracksRef.current ?? [];
+        const artLookup = buildArtLookup(cachedTracks);
+        const uriLookup = buildUriLookup(cachedTracks);
+        const albumArt = matchAlbumArt(newSongName, artLookup);
+        const uri = matchTrackUri(newSongName, uriLookup);
+
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (m.id !== msgId || !m.songs) return m;
+            return {
+              ...m,
+              songs: [...m.songs, { name: newSongName, albumArt, uri }],
+            };
+          }),
+        );
+      } catch {}
+    },
+    [spotifyToken],
+  );
+
+  const renderSong = (song: SongEntry, index: number, msgId: string) => {
+    const parts = song.name.split(" - ");
+    const title = parts[0]?.trim() ?? song.name;
+    const artist = parts[1]?.trim();
+    const key = `${msgId}-${index}`;
+    const queueState = queuedSongs[key];
+
     return (
-      <View style={styles.trackRow} key={track.id}>
-        <Text style={styles.trackIndex}>{index + 1}</Text>
-        {albumArt ? (
-          <Image source={{ uri: albumArt }} style={styles.albumArt} />
-        ) : (
-          <View style={styles.albumPlaceholder}>
-            <FontAwesome name="music" size={14} color={theme.textMuted} />
+      <SwipeableTrackRow
+        key={`${song.name}-${index}`}
+        onRemove={() => handleRemoveSong(msgId, song.name)}
+      >
+        <View style={styles.trackRow}>
+          <Text style={styles.trackIndex}>{index + 1}</Text>
+          {song.albumArt ? (
+            <Image source={{ uri: song.albumArt }} style={styles.albumArt} />
+          ) : (
+            <View style={styles.albumPlaceholder}>
+              <FontAwesome name="music" size={14} color={theme.textMuted} />
+            </View>
+          )}
+          <View style={styles.trackInfo}>
+            <Text style={styles.trackName} numberOfLines={1}>
+              {title}
+            </Text>
+            {artist && (
+              <Text style={styles.trackArtist} numberOfLines={1}>
+                {artist}
+              </Text>
+            )}
           </View>
-        )}
-        <View style={styles.trackInfo}>
-          <Text style={styles.trackName} numberOfLines={1}>
-            {track.name}
-          </Text>
-          <Text style={styles.trackArtist} numberOfLines={1}>
-            {track.artists.map((a) => a.name).join(", ")}
-          </Text>
+          <Pressable
+            style={({ pressed }) => [
+              styles.queueButton,
+              queueState === "queued" && styles.queueButtonDone,
+              queueState === "error" && styles.queueButtonError,
+              pressed && !queueState && styles.queueButtonPressed,
+              !song.uri && styles.queueButtonDisabled,
+            ]}
+            onPress={() => handleAddToQueue(song, index, msgId)}
+            disabled={!!queueState || !song.uri}
+          >
+            {queueState === "queuing" ? (
+              <ActivityIndicator size={12} color={theme.primary} />
+            ) : (
+              <FontAwesome
+                name={
+                  queueState === "queued"
+                    ? "check"
+                    : queueState === "error"
+                      ? "times"
+                      : "plus"
+                }
+                size={12}
+                color={
+                  queueState === "queued"
+                    ? theme.success
+                    : queueState === "error"
+                      ? theme.danger
+                      : song.uri
+                        ? theme.primary
+                        : theme.textMuted
+                }
+              />
+            )}
+          </Pressable>
         </View>
-        <Text style={styles.trackDuration}>
-          {formatDuration(track.duration_ms)}
-        </Text>
-      </View>
+      </SwipeableTrackRow>
     );
   };
 
@@ -216,12 +712,19 @@ export default function GenerateScreen() {
     if (item.role === "user") {
       return (
         <View style={styles.userBubble}>
+          {item.imageUri && (
+            <Image
+              source={{ uri: item.imageUri }}
+              style={styles.userImage}
+              resizeMode="cover"
+            />
+          )}
           <Text style={styles.userText}>{item.text}</Text>
         </View>
       );
     }
 
-    const isThinking = generating && !item.tracks;
+    const isThinking = generating && !item.songs;
 
     return (
       <View style={styles.assistantSection}>
@@ -235,24 +738,101 @@ export default function GenerateScreen() {
           )}
           <Text style={styles.assistantText}>{item.text}</Text>
         </View>
-        {item.tracks && item.tracks.length > 0 && (
-          <View style={styles.trackList}>
-            {item.tracks.map((track, i) => renderTrack(track, i))}
-            <View style={styles.queueFooter}>
-              <View style={styles.queueStat}>
-                <FontAwesome name="music" size={11} color={theme.primary} />
-                <Text style={styles.queueStatText}>
-                  {item.tracks.length} tracks
-                </Text>
-              </View>
-              <View style={styles.queueStat}>
-                <FontAwesome name="clock-o" size={11} color={theme.primary} />
-                <Text style={styles.queueStatText}>
-                  ~{item.totalMinutes} min
-                </Text>
+        {item.songs && item.songs.length > 0 && (
+          <>
+            <View style={styles.trackList}>
+              {item.songs.map((song, i) => renderSong(song, i, item.id))}
+              <View style={styles.queueFooter}>
+                <View style={styles.queueStat}>
+                  <FontAwesome name="music" size={11} color={theme.primary} />
+                  <Text style={styles.queueStatText}>
+                    {item.songs.length} tracks
+                  </Text>
+                </View>
               </View>
             </View>
-          </View>
+            {(() => {
+              const allKeys = item.songs!.map((_, i) => `${item.id}-${i}`);
+              const queuableCount = item.songs!.filter(
+                (s, i) => s.uri && !queuedSongs[allKeys[i]],
+              ).length;
+              const queuingCount = allKeys.filter(
+                (k) => queuedSongs[k] === "queuing",
+              ).length;
+              const allQueued =
+                queuableCount === 0 &&
+                queuingCount === 0 &&
+                item.songs!.some(
+                  (s, i) => s.uri && queuedSongs[allKeys[i]] === "queued",
+                );
+
+              return (
+                <View style={styles.actionRow}>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.actionButton,
+                      allQueued && styles.actionButtonDone,
+                      pressed &&
+                        !allQueued &&
+                        queuingCount === 0 &&
+                        styles.actionButtonPressed,
+                      queuableCount === 0 &&
+                        queuingCount === 0 &&
+                        !allQueued &&
+                        styles.actionButtonDisabled,
+                    ]}
+                    onPress={() => handleAddAllToQueue(item)}
+                    disabled={queuableCount === 0 || queuingCount > 0}
+                  >
+                    {queuingCount > 0 ? (
+                      <ActivityIndicator size={14} color={theme.primary} />
+                    ) : (
+                      <FontAwesome
+                        name={allQueued ? "check" : "plus"}
+                        size={14}
+                        color={allQueued ? theme.success : theme.primary}
+                      />
+                    )}
+                    <Text
+                      style={[
+                        styles.actionButtonText,
+                        allQueued && styles.actionButtonTextDone,
+                      ]}
+                    >
+                      {allQueued
+                        ? "Added to Queue"
+                        : queuingCount > 0
+                          ? "Adding..."
+                          : "Add All to Queue"}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.actionButton,
+                      item.saved && styles.actionButtonDone,
+                      pressed && !item.saved && styles.actionButtonPressed,
+                    ]}
+                    onPress={() => openSaveModal(item)}
+                    disabled={item.saved}
+                  >
+                    <FontAwesome
+                      name={item.saved ? "check" : "heart-o"}
+                      size={14}
+                      color={item.saved ? theme.success : theme.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.actionButtonText,
+                        item.saved && styles.actionButtonTextDone,
+                      ]}
+                    >
+                      {item.saved ? "Saved" : "Save to Memories"}
+                    </Text>
+                  </Pressable>
+                </View>
+              );
+            })()}
+          </>
         )}
       </View>
     );
@@ -266,6 +846,18 @@ export default function GenerateScreen() {
     >
       <View style={styles.headerBar}>
         <Text style={styles.headerTitle}>Generate</Text>
+        {messages.length > 0 && (
+          <Pressable
+            style={({ pressed }) => [
+              styles.newButton,
+              pressed && styles.newButtonPressed,
+            ]}
+            onPress={handleNew}
+          >
+            <FontAwesome name="plus" size={12} color={theme.primary} />
+            <Text style={styles.newButtonText}>New</Text>
+          </Pressable>
+        )}
       </View>
 
       {messages.length === 0 ? (
@@ -311,14 +903,41 @@ export default function GenerateScreen() {
         />
       )}
 
+      {selectedImage && (
+        <View style={styles.imagePreviewBar}>
+          <Image
+            source={{ uri: selectedImage.uri }}
+            style={styles.imagePreviewThumb}
+          />
+          <Pressable
+            style={styles.imagePreviewRemove}
+            onPress={() => setSelectedImage(null)}
+          >
+            <FontAwesome name="times" size={12} color="#fff" />
+          </Pressable>
+        </View>
+      )}
       <View style={styles.inputContainer}>
+        {!hasQueue && (
+          <Pressable
+            style={styles.imagePickerButton}
+            onPress={handlePickImage}
+            disabled={generating}
+          >
+            <FontAwesome
+              name="camera"
+              size={18}
+              color={generating ? theme.textMuted : theme.primary}
+            />
+          </Pressable>
+        )}
         <TextInput
           style={styles.input}
-          placeholder="Describe a vibe..."
+          placeholder={hasQueue ? "Adjust the vibe..." : "Describe a vibe..."}
           placeholderTextColor={theme.textMuted}
           value={input}
           onChangeText={setInput}
-          onSubmitEditing={handleGenerate}
+          onSubmitEditing={handleSubmit}
           returnKeyType="send"
           editable={!generating}
           multiline
@@ -326,10 +945,11 @@ export default function GenerateScreen() {
         <Pressable
           style={[
             styles.sendButton,
-            (!input.trim() || generating) && styles.sendButtonDisabled,
+            ((!input.trim() && !selectedImage) || generating) &&
+              styles.sendButtonDisabled,
           ]}
-          onPress={handleGenerate}
-          disabled={!input.trim() || generating}
+          onPress={handleSubmit}
+          disabled={(!input.trim() && !selectedImage) || generating}
         >
           {generating ? (
             <ActivityIndicator color="#fff" size="small" />
@@ -338,8 +958,132 @@ export default function GenerateScreen() {
           )}
         </Pressable>
       </View>
+
+      <Modal
+        visible={!!saveModalMsg}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSaveModalMsg(null)}
+      >
+        <Pressable
+          style={styles.modalOverlay}
+          onPress={() => setSaveModalMsg(null)}
+        >
+          <Pressable style={styles.modalContent} onPress={() => {}}>
+            <Text style={styles.modalTitle}>Save to Memories</Text>
+
+            <Text style={styles.modalLabel}>Title</Text>
+            <TextInput
+              style={styles.modalInput}
+              value={saveTitle}
+              onChangeText={setSaveTitle}
+              placeholder="Name this memory..."
+              placeholderTextColor={theme.textMuted}
+              autoFocus
+            />
+
+            <Text style={styles.modalLabel}>Cover Image</Text>
+            <Pressable
+              style={styles.coverPickerButton}
+              onPress={handlePickCoverImage}
+            >
+              {saveCoverImage ? (
+                <Image
+                  source={{ uri: saveCoverImage }}
+                  style={styles.coverPreview}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.coverPlaceholder}>
+                  <FontAwesome
+                    name="camera"
+                    size={24}
+                    color={theme.textMuted}
+                  />
+                  <Text style={styles.coverPlaceholderText}>Add a photo</Text>
+                </View>
+              )}
+            </Pressable>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalCancelButton,
+                  pressed && { opacity: 0.7 },
+                ]}
+                onPress={() => setSaveModalMsg(null)}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalSaveButton,
+                  pressed && { opacity: 0.7 },
+                ]}
+                onPress={handleConfirmSave}
+              >
+                <FontAwesome name="heart" size={14} color="#fff" />
+                <Text style={styles.modalSaveText}>Save</Text>
+              </Pressable>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </KeyboardAvoidingView>
   );
+}
+
+function buildArtLookup(tracks: SpotifyTrack[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const t of tracks) {
+    const art = t.album.images[t.album.images.length - 1]?.url;
+    if (!art) continue;
+    const key = `${t.name} - ${t.artists[0]?.name}`.toLowerCase();
+    map.set(key, art);
+    map.set(t.name.toLowerCase(), art);
+  }
+  return map;
+}
+
+function matchAlbumArt(
+  songName: string,
+  lookup: Map<string, string>,
+): string | undefined {
+  const lower = songName.toLowerCase();
+  const exact = lookup.get(lower);
+  if (exact) return exact;
+
+  let match: string | undefined;
+  lookup.forEach((art, key) => {
+    if (!match && (lower.includes(key) || key.includes(lower))) match = art;
+  });
+  if (match) return match;
+  return undefined;
+}
+
+function buildUriLookup(tracks: SpotifyTrack[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const t of tracks) {
+    const key = `${t.name} - ${t.artists[0]?.name}`.toLowerCase();
+    map.set(key, t.uri);
+    map.set(t.name.toLowerCase(), t.uri);
+  }
+  return map;
+}
+
+function matchTrackUri(
+  songName: string,
+  lookup: Map<string, string>,
+): string | undefined {
+  const lower = songName.toLowerCase();
+  const exact = lookup.get(lower);
+  if (exact) return exact;
+
+  let match: string | undefined;
+  lookup.forEach((uri, key) => {
+    if (!match && (lower.includes(key) || key.includes(lower))) match = uri;
+  });
+  return match;
 }
 
 function formatMoodSummary(af: {
@@ -376,6 +1120,9 @@ const styles = StyleSheet.create({
     backgroundColor: theme.bg,
   },
   headerBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 20,
     paddingVertical: 14,
     backgroundColor: "transparent",
@@ -385,6 +1132,26 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: theme.text,
     letterSpacing: -0.5,
+  },
+  newButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: theme.primaryMuted,
+    borderWidth: 1,
+    borderColor: theme.primaryBorder,
+  },
+  newButtonPressed: {
+    opacity: 0.7,
+    transform: [{ scale: 0.96 }],
+  },
+  newButtonText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: theme.primary,
   },
   emptyState: {
     flex: 1,
@@ -532,12 +1299,6 @@ const styles = StyleSheet.create({
     color: theme.textSecondary,
     marginTop: 2,
   },
-  trackDuration: {
-    fontSize: 12,
-    color: theme.textMuted,
-    marginLeft: 8,
-    fontVariant: ["tabular-nums"],
-  },
   queueFooter: {
     flexDirection: "row",
     justifyContent: "center",
@@ -588,5 +1349,218 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     opacity: 0.3,
+  },
+  actionRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+    backgroundColor: "transparent",
+  },
+  actionButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+    backgroundColor: theme.primaryMuted,
+    borderWidth: 1,
+    borderColor: theme.primaryBorder,
+  },
+  actionButtonPressed: {
+    opacity: 0.7,
+    transform: [{ scale: 0.98 }],
+  },
+  actionButtonDone: {
+    backgroundColor: theme.successMuted,
+    borderColor: "rgba(52, 199, 89, 0.25)",
+  },
+  actionButtonDisabled: {
+    opacity: 0.3,
+  },
+  actionButtonText: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: theme.primary,
+  },
+  actionButtonTextDone: {
+    color: theme.success,
+  },
+  queueButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: theme.primaryMuted,
+    borderWidth: 1,
+    borderColor: theme.primaryBorder,
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 8,
+  },
+  queueButtonPressed: {
+    opacity: 0.6,
+    transform: [{ scale: 0.9 }],
+  },
+  queueButtonDone: {
+    backgroundColor: theme.successMuted,
+    borderColor: "rgba(52, 199, 89, 0.25)",
+  },
+  queueButtonError: {
+    backgroundColor: theme.dangerMuted,
+    borderColor: theme.dangerBorder,
+  },
+  queueButtonDisabled: {
+    opacity: 0.3,
+  },
+  deleteBackground: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: theme.danger,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    paddingRight: 24,
+  },
+  imagePickerButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  imagePreviewBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: theme.bg,
+  },
+  imagePreviewThumb: {
+    width: 56,
+    height: 56,
+    borderRadius: 10,
+  },
+  imagePreviewRemove: {
+    position: "absolute",
+    top: 4,
+    left: 64,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  userImage: {
+    width: SCREEN_WIDTH * 0.6,
+    height: 160,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 24,
+  },
+  modalContent: {
+    width: "100%",
+    backgroundColor: theme.surface,
+    borderRadius: 20,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: theme.text,
+    marginBottom: 20,
+    textAlign: "center",
+    letterSpacing: -0.3,
+  },
+  modalLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: theme.textSecondary,
+    marginBottom: 8,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  modalInput: {
+    backgroundColor: theme.bg,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: theme.text,
+    marginBottom: 20,
+  },
+  coverPickerButton: {
+    marginBottom: 24,
+    borderRadius: 14,
+    overflow: "hidden",
+  },
+  coverPreview: {
+    width: "100%",
+    height: 160,
+    borderRadius: 14,
+  },
+  coverPlaceholder: {
+    height: 120,
+    backgroundColor: theme.bg,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  coverPlaceholderText: {
+    fontSize: 13,
+    color: theme.textMuted,
+    fontWeight: "500",
+  },
+  modalActions: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  modalCancelButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: theme.bg,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalCancelText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: theme.textSecondary,
+  },
+  modalSaveButton: {
+    flex: 1,
+    flexDirection: "row",
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: theme.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  modalSaveText: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#fff",
   },
 });

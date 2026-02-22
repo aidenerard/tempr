@@ -1,10 +1,26 @@
-import { StyleSheet, ScrollView, Pressable } from "react-native";
+import {
+  StyleSheet,
+  ScrollView,
+  Pressable,
+  FlatList,
+  ActivityIndicator,
+} from "react-native";
 import { Text, View } from "@/components/Themed";
 import { useAuth } from "@/lib/AuthContext";
 import { FontAwesome } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
+import { useState, useCallback } from "react";
 import { theme } from "@/constants/Colors";
+import {
+  getCalendarPermissionStatus,
+  getUpcomingEvents,
+  formatEventTime,
+  formatEventDate,
+  type CalendarEvent,
+} from "@/lib/calendar";
+import { loadRecommendations } from "@/lib/calendarStorage";
 
 function getGreeting(): string {
   const h = new Date().getHours();
@@ -26,6 +42,29 @@ export default function HomeScreen() {
   const { session } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [recCount, setRecCount] = useState(0);
+  const [calendarConnected, setCalendarConnected] = useState(false);
+  const [calendarLoading, setCalendarLoading] = useState(true);
+
+  useFocusEffect(
+    useCallback(() => {
+      (async () => {
+        setCalendarLoading(true);
+        const hasPermission = await getCalendarPermissionStatus();
+        setCalendarConnected(hasPermission);
+        if (hasPermission) {
+          const [events, recs] = await Promise.all([
+            getUpcomingEvents(24),
+            loadRecommendations(),
+          ]);
+          setCalendarEvents(events);
+          setRecCount(recs.length);
+        }
+        setCalendarLoading(false);
+      })();
+    }, []),
+  );
 
   const displayName =
     session?.user?.user_metadata?.full_name ||
@@ -81,6 +120,112 @@ export default function HomeScreen() {
           </Pressable>
         ))}
       </View>
+
+      <Pressable
+        style={({ pressed }) => [
+          styles.calendarSectionHeader,
+          pressed && styles.calendarSectionHeaderPressed,
+        ]}
+        onPress={() => router.push("/(tabs)/calendar")}
+      >
+        <View style={styles.calendarTitleRow}>
+          <FontAwesome name="calendar" size={16} color={theme.primary} />
+          <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>
+            Calendar
+          </Text>
+        </View>
+        <View style={styles.calendarSeeAll}>
+          <Text style={styles.calendarSeeAllText}>
+            {calendarConnected ? "See all" : "Connect"}
+          </Text>
+          <FontAwesome
+            name="chevron-right"
+            size={10}
+            color={theme.primary}
+          />
+        </View>
+      </Pressable>
+
+      {calendarLoading ? (
+        <View style={styles.calendarLoadingWrap}>
+          <ActivityIndicator color={theme.primary} size="small" />
+        </View>
+      ) : !calendarConnected ? (
+        <Pressable
+          style={({ pressed }) => [
+            styles.calendarConnectCard,
+            pressed && styles.calendarConnectCardPressed,
+          ]}
+          onPress={() => router.push("/(tabs)/calendar")}
+        >
+          <View style={styles.calendarConnectIcon}>
+            <FontAwesome
+              name="calendar-plus-o"
+              size={20}
+              color={theme.primary}
+            />
+          </View>
+          <View style={styles.calendarConnectContent}>
+            <Text style={styles.calendarConnectTitle}>
+              Connect your calendar
+            </Text>
+            <Text style={styles.calendarConnectSubtitle}>
+              Get playlist recommendations before every event
+            </Text>
+          </View>
+        </Pressable>
+      ) : calendarEvents.length === 0 ? (
+        <Pressable
+          style={({ pressed }) => [
+            styles.calendarEmptyCard,
+            pressed && styles.calendarEmptyCardPressed,
+          ]}
+          onPress={() => router.push("/(tabs)/calendar")}
+        >
+          <FontAwesome
+            name="calendar-check-o"
+            size={18}
+            color={theme.textMuted}
+          />
+          <Text style={styles.calendarEmptyText}>
+            No upcoming events{recCount > 0 ? ` · ${recCount} saved` : ""}
+          </Text>
+        </Pressable>
+      ) : (
+        <FlatList
+          data={calendarEvents.slice(0, 8)}
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.calendarList}
+          renderItem={({ item }) => (
+            <Pressable
+              style={({ pressed }) => [
+                styles.calendarCard,
+                pressed && styles.calendarCardPressed,
+              ]}
+              onPress={() => router.push("/(tabs)/calendar")}
+            >
+              <View style={styles.calendarCardTimeBadge}>
+                <Text style={styles.calendarCardTime}>
+                  {formatEventTime(item.startDate)}
+                </Text>
+              </View>
+              <Text style={styles.calendarCardTitle} numberOfLines={2}>
+                {item.title}
+              </Text>
+              <Text style={styles.calendarCardDate}>
+                {formatEventDate(item.startDate)}
+              </Text>
+              {item.location ? (
+                <Text style={styles.calendarCardLocation} numberOfLines={1}>
+                  {item.location}
+                </Text>
+              ) : null}
+            </Pressable>
+          )}
+        />
+      )}
 
       <View style={styles.tipCard}>
         <FontAwesome name="lightbulb-o" size={20} color={theme.primaryLight} />
@@ -211,6 +356,142 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "600",
     color: theme.text,
+  },
+  calendarSectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 14,
+    backgroundColor: "transparent",
+  },
+  calendarSectionHeaderPressed: {
+    opacity: 0.7,
+  },
+  calendarTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "transparent",
+  },
+  calendarSeeAll: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "transparent",
+  },
+  calendarSeeAllText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: theme.primary,
+  },
+  calendarLoadingWrap: {
+    height: 100,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 28,
+    backgroundColor: "transparent",
+  },
+  calendarConnectCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: theme.surface,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 28,
+    borderWidth: 1,
+    borderColor: theme.primaryBorder,
+    gap: 14,
+  },
+  calendarConnectCardPressed: {
+    opacity: 0.8,
+    transform: [{ scale: 0.98 }],
+  },
+  calendarConnectIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: theme.primaryMuted,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  calendarConnectContent: {
+    flex: 1,
+    backgroundColor: "transparent",
+  },
+  calendarConnectTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: theme.text,
+  },
+  calendarConnectSubtitle: {
+    fontSize: 12,
+    color: theme.textSecondary,
+    marginTop: 2,
+  },
+  calendarEmptyCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: theme.surface,
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 28,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+    gap: 10,
+  },
+  calendarEmptyCardPressed: {
+    opacity: 0.7,
+  },
+  calendarEmptyText: {
+    fontSize: 13,
+    color: theme.textMuted,
+    fontWeight: "500",
+  },
+  calendarList: {
+    paddingBottom: 28,
+    gap: 10,
+  },
+  calendarCard: {
+    width: 150,
+    backgroundColor: theme.surface,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: theme.surfaceBorder,
+  },
+  calendarCardPressed: {
+    opacity: 0.8,
+    transform: [{ scale: 0.96 }],
+  },
+  calendarCardTimeBadge: {
+    alignSelf: "flex-start",
+    backgroundColor: theme.primaryMuted,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    marginBottom: 10,
+  },
+  calendarCardTime: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: theme.primary,
+  },
+  calendarCardTitle: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: theme.text,
+    lineHeight: 19,
+    marginBottom: 6,
+  },
+  calendarCardDate: {
+    fontSize: 11,
+    color: theme.textSecondary,
+    fontWeight: "500",
+  },
+  calendarCardLocation: {
+    fontSize: 11,
+    color: theme.textMuted,
+    marginTop: 3,
   },
   tipCard: {
     flexDirection: "row",

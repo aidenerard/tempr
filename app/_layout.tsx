@@ -3,12 +3,16 @@ import { ThemeProvider, DarkTheme } from "@react-navigation/native";
 import { useFonts } from "expo-font";
 import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { StatusBar } from "expo-status-bar";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import * as Notifications from "expo-notifications";
 import "react-native-reanimated";
 
 import { AuthProvider, useAuth } from "@/lib/AuthContext";
 import { theme } from "@/constants/Colors";
+import { getCalendarPermissionStatus } from "@/lib/calendar";
+import { scanAndScheduleUpcomingEvents } from "@/lib/calendarNotifications";
 
 export { ErrorBoundary } from "expo-router";
 
@@ -27,10 +31,49 @@ const TemprDark = {
   },
 };
 
+function useCalendarAutoScan() {
+  const { spotifyToken } = useAuth();
+  const scanned = useRef(false);
+
+  useEffect(() => {
+    if (!spotifyToken || scanned.current) return;
+    scanned.current = true;
+
+    (async () => {
+      const hasPermission = await getCalendarPermissionStatus();
+      if (!hasPermission) return;
+      try {
+        await scanAndScheduleUpcomingEvents(spotifyToken);
+      } catch (err) {
+        console.log("[AutoScan] Calendar scan failed:", err);
+      }
+    })();
+  }, [spotifyToken]);
+}
+
+function useNotificationNavigation() {
+  const router = useRouter();
+
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener(
+      (response) => {
+        const data = response.notification.request.content.data;
+        if (data?.type === "calendar_recommendation") {
+          router.push("/(tabs)/calendar");
+        }
+      },
+    );
+    return () => sub.remove();
+  }, [router]);
+}
+
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+
+  useCalendarAutoScan();
+  useNotificationNavigation();
 
   useEffect(() => {
     if (loading) return;
@@ -62,9 +105,11 @@ export default function RootLayout() {
   if (!loaded) return null;
 
   return (
-    <AuthProvider>
-      <RootLayoutNav />
-    </AuthProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AuthProvider>
+        <RootLayoutNav />
+      </AuthProvider>
+    </GestureHandlerRootView>
   );
 }
 

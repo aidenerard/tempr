@@ -1,8 +1,8 @@
-import React from "react";
-import { StyleSheet } from "react-native";
+import { theme } from "@/constants/Colors";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { Tabs } from "expo-router";
-import { theme } from "@/constants/Colors";
+import React from "react";
+import { StyleSheet } from "react-native";
 
 function TabIcon({
   name,
@@ -42,6 +42,16 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="calendar"
+        options={{
+          href: null,
+          title: "Calendar",
+          tabBarIcon: ({ color }) => (
+            <TabIcon name="calendar" color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="discover"
         options={{
           title: "Discover",
@@ -51,10 +61,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="library"
         options={{
-          title: "Library",
-          tabBarIcon: ({ color }) => (
-            <TabIcon name="bookmark" color={color} />
-          ),
+          title: "Memories",
+          tabBarIcon: ({ color }) => <TabIcon name="heart" color={color} />,
         }}
       />
       <Tabs.Screen

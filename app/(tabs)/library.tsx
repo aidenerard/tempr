@@ -1,11 +1,84 @@
-import { StyleSheet, ScrollView } from "react-native";
+import {
+  StyleSheet,
+  ScrollView,
+  Pressable,
+  Image,
+  Alert,
+  Dimensions,
+} from "react-native";
 import { Text, View } from "@/components/Themed";
+import { useState, useCallback } from "react";
 import { FontAwesome } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 import { theme } from "@/constants/Colors";
+import { loadQueues, deleteQueue, type SavedQueue } from "@/lib/queueStorage";
 
-export default function LibraryScreen() {
+const SCREEN_WIDTH = Dimensions.get("window").width;
+
+function formatDate(timestamp: number): string {
+  const date = new Date(timestamp);
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+export default function MemoriesScreen() {
   const insets = useSafeAreaInsets();
+  const [queues, setQueues] = useState<SavedQueue[]>([]);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadQueues().then(setQueues);
+    }, []),
+  );
+
+  const handleDelete = (queue: SavedQueue) => {
+    Alert.alert(
+      "Delete Memory",
+      `Remove "${queue.title || queue.prompt}" from your memories?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            await deleteQueue(queue.id);
+            setQueues((prev) => prev.filter((q) => q.id !== queue.id));
+            if (expandedId === queue.id) setExpandedId(null);
+          },
+        },
+      ],
+    );
+  };
+
+  const toggleExpand = (id: string) => {
+    setExpandedId((prev) => (prev === id ? null : id));
+  };
+
+  if (queues.length === 0) {
+    return (
+      <ScrollView
+        style={[styles.container, { paddingTop: insets.top + 16 }]}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={styles.headerTitle}>Memories</Text>
+        <View style={styles.emptyState}>
+          <View style={styles.emptyIconWrap}>
+            <FontAwesome name="heart-o" size={36} color={theme.primary} />
+          </View>
+          <Text style={styles.emptyTitle}>No memories yet</Text>
+          <Text style={styles.emptySubtitle}>
+            Generate a queue and save it to capture the moment.
+          </Text>
+        </View>
+      </ScrollView>
+    );
+  }
 
   return (
     <ScrollView
@@ -13,34 +86,129 @@ export default function LibraryScreen() {
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
     >
-      <Text style={styles.headerTitle}>Library</Text>
+      <Text style={styles.headerTitle}>Memories</Text>
+      <Text style={styles.subtitle}>
+        {queues.length} {queues.length === 1 ? "memory" : "memories"}
+      </Text>
 
-      <View style={styles.emptyState}>
-        <View style={styles.emptyIconWrap}>
-          <FontAwesome name="bookmark-o" size={36} color={theme.primary} />
-        </View>
-        <Text style={styles.emptyTitle}>No saved queues yet</Text>
-        <Text style={styles.emptySubtitle}>
-          Your generated queues will appear here. Head over to Generate and
-          create your first one.
-        </Text>
-      </View>
+      {queues.map((queue) => {
+        const isExpanded = expandedId === queue.id;
+        const displayTitle = queue.title || queue.prompt;
+        return (
+          <View style={styles.card} key={queue.id}>
+            <Pressable
+              style={({ pressed }) => [pressed && styles.cardPressed]}
+              onPress={() => toggleExpand(queue.id)}
+            >
+              {queue.coverImage ? (
+                <Image
+                  source={{ uri: queue.coverImage }}
+                  style={styles.cardCover}
+                  resizeMode="cover"
+                />
+              ) : (
+                <View style={styles.cardCoverPlaceholder}>
+                  <FontAwesome
+                    name="music"
+                    size={28}
+                    color={theme.primaryBorder}
+                  />
+                </View>
+              )}
+              <View style={styles.cardBody}>
+                <View style={styles.cardTitleRow}>
+                  <Text style={styles.cardTitle} numberOfLines={2}>
+                    {displayTitle}
+                  </Text>
+                  <Pressable
+                    onPress={() => handleDelete(queue)}
+                    hitSlop={12}
+                    style={({ pressed }) => [
+                      styles.deleteButton,
+                      pressed && styles.deleteButtonPressed,
+                    ]}
+                  >
+                    <FontAwesome
+                      name="trash-o"
+                      size={14}
+                      color={theme.danger}
+                    />
+                  </Pressable>
+                </View>
+                <Text style={styles.cardDate}>
+                  {formatDate(queue.savedAt)}
+                </Text>
+                <View style={styles.cardMeta}>
+                  <FontAwesome
+                    name="music"
+                    size={10}
+                    color={theme.textMuted}
+                  />
+                  <Text style={styles.cardMetaText}>
+                    {queue.songs.length} tracks
+                  </Text>
+                  {queue.moodLine ? (
+                    <>
+                      <Text style={styles.cardMetaDot}>·</Text>
+                      <Text
+                        style={styles.cardMetaText}
+                        numberOfLines={1}
+                      >
+                        {queue.moodLine}
+                      </Text>
+                    </>
+                  ) : null}
+                </View>
+                <FontAwesome
+                  name={isExpanded ? "chevron-up" : "chevron-down"}
+                  size={10}
+                  color={theme.textMuted}
+                  style={styles.chevron}
+                />
+              </View>
+            </Pressable>
 
-      <View style={styles.featurePreview}>
-        <Text style={styles.featureTitle}>Coming soon</Text>
-        {[
-          { icon: "save" as const, label: "Save queues to replay later" },
-          { icon: "share" as const, label: "Share queues with friends" },
-          { icon: "spotify" as const, label: "Export directly to Spotify" },
-        ].map((item) => (
-          <View style={styles.featureRow} key={item.label}>
-            <View style={styles.featureIconWrap}>
-              <FontAwesome name={item.icon} size={14} color={theme.primary} />
-            </View>
-            <Text style={styles.featureLabel}>{item.label}</Text>
+            {isExpanded && (
+              <View style={styles.trackList}>
+                {queue.songs.map((song, i) => {
+                  const parts = song.name.split(" - ");
+                  const title = parts[0]?.trim() ?? song.name;
+                  const artist = parts[1]?.trim();
+                  return (
+                    <View style={styles.trackRow} key={`${song.name}-${i}`}>
+                      <Text style={styles.trackIndex}>{i + 1}</Text>
+                      {song.albumArt ? (
+                        <Image
+                          source={{ uri: song.albumArt }}
+                          style={styles.albumArt}
+                        />
+                      ) : (
+                        <View style={styles.albumPlaceholder}>
+                          <FontAwesome
+                            name="music"
+                            size={12}
+                            color={theme.textMuted}
+                          />
+                        </View>
+                      )}
+                      <View style={styles.trackInfo}>
+                        <Text style={styles.trackName} numberOfLines={1}>
+                          {title}
+                        </Text>
+                        {artist ? (
+                          <Text style={styles.trackArtist} numberOfLines={1}>
+                            {artist}
+                          </Text>
+                        ) : null}
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
           </View>
-        ))}
-      </View>
+        );
+      })}
     </ScrollView>
   );
 }
@@ -60,7 +228,12 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: theme.text,
     letterSpacing: -0.5,
-    marginBottom: 24,
+  },
+  subtitle: {
+    fontSize: 14,
+    color: theme.textSecondary,
+    marginTop: 4,
+    marginBottom: 20,
   },
   emptyState: {
     flex: 1,
@@ -92,39 +265,130 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     paddingHorizontal: 24,
   },
-  featurePreview: {
+  card: {
     backgroundColor: theme.surface,
-    borderRadius: 16,
-    padding: 20,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: theme.surfaceBorder,
-  },
-  featureTitle: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: theme.textMuted,
-    textTransform: "uppercase",
-    letterSpacing: 1,
     marginBottom: 16,
+    overflow: "hidden",
   },
-  featureRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 14,
-    backgroundColor: "transparent",
+  cardPressed: {
+    opacity: 0.85,
   },
-  featureIconWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+  cardCover: {
+    width: "100%",
+    height: 160,
+  },
+  cardCoverPlaceholder: {
+    width: "100%",
+    height: 100,
     backgroundColor: theme.primaryMuted,
     alignItems: "center",
     justifyContent: "center",
-    marginRight: 12,
   },
-  featureLabel: {
-    fontSize: 14,
-    color: theme.textSecondary,
+  cardBody: {
+    padding: 16,
+    backgroundColor: "transparent",
+  },
+  cardTitleRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    backgroundColor: "transparent",
+    gap: 12,
+  },
+  cardTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: theme.text,
+    letterSpacing: -0.2,
+    flex: 1,
+  },
+  cardDate: {
+    fontSize: 13,
+    color: theme.primary,
+    fontWeight: "600",
+    marginTop: 4,
+  },
+  cardMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 8,
+    gap: 6,
+    backgroundColor: "transparent",
+  },
+  cardMetaText: {
+    fontSize: 12,
+    color: theme.textMuted,
     fontWeight: "500",
+    flexShrink: 1,
+  },
+  cardMetaDot: {
+    fontSize: 12,
+    color: theme.textMuted,
+  },
+  chevron: {
+    alignSelf: "center",
+    marginTop: 12,
+  },
+  deleteButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: theme.dangerMuted,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  deleteButtonPressed: {
+    opacity: 0.6,
+  },
+  trackList: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.surfaceBorder,
+  },
+  trackRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.surfaceBorder,
+    backgroundColor: "transparent",
+  },
+  trackIndex: {
+    width: 24,
+    fontSize: 11,
+    color: theme.textMuted,
+    textAlign: "center",
+    fontWeight: "500",
+  },
+  albumArt: {
+    width: 36,
+    height: 36,
+    borderRadius: 5,
+  },
+  albumPlaceholder: {
+    width: 36,
+    height: 36,
+    borderRadius: 5,
+    backgroundColor: theme.surfaceLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  trackInfo: {
+    flex: 1,
+    marginLeft: 10,
+    backgroundColor: "transparent",
+  },
+  trackName: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: theme.text,
+  },
+  trackArtist: {
+    fontSize: 11,
+    color: theme.textSecondary,
+    marginTop: 1,
   },
 });
