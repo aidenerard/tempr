@@ -6,14 +6,84 @@ import {
     FlatList,
     ActivityIndicator,
     Image,
-    Pressable,
     ViewToken,
 } from "react-native";
-import YoutubePlayer from "react-native-youtube-iframe";
+import { WebView } from "react-native-webview";
 import { useAuth } from "@/lib/AuthContext";
 import { getTopTracks, SpotifyTrack } from "@/lib/spotify";
 import { findMusicVideo, YouTubeMatch } from "@/lib/youtube";
 import { theme } from "@/constants/Colors";
+
+// ---- FIX FOR 153: stable HTTPS origin even in dev ----
+// This does NOT need to resolve. It just needs to be a consistent https origin string.
+const WEB_ORIGIN = __DEV__ ? "https://app.local" : "https://yourdomain.com";
+
+function buildYouTubeHtml(videoId: string, origin: string): string {
+    return `<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="origin">
+  <style>
+    *{margin:0;padding:0}
+    html,body{width:100%;height:100%;background:#000;overflow:hidden}
+    #p{width:100%;height:100%}
+  </style>
+</head>
+<body>
+  <div id="p"></div>
+
+  <script>
+    var tag=document.createElement('script');
+    tag.src='https://www.youtube.com/iframe_api';
+    document.head.appendChild(tag);
+
+    var player;
+
+    function onYouTubeIframeAPIReady(){
+      player=new YT.Player('p',{
+        width:'100%',
+        height:'100%',
+        videoId:'${videoId}',
+        playerVars:{
+          autoplay:1,
+          mute:1,
+          playsinline:1,
+          controls:0,
+          rel:0,
+          modestbranding:1,
+          enablejsapi:1,
+          origin:'${origin}'
+        },
+        events:{
+          onReady:function(e){
+            // IMPORTANT: do NOT force iframe.referrerPolicy here.
+            // That can contribute to missing referrer / error 153.
+            try { e.target.playVideo(); } catch(err) {}
+          },
+          onStateChange:function(e){
+            // Keep your existing behavior; not required for 153.
+            if(e.data===1){
+              try { player.unMute(); player.setVolume(100); } catch(err) {}
+            }
+          }
+        }
+      });
+    }
+
+    function handle(msg){
+      if(!player) return;
+      // RN Android uses document message, iOS uses window message
+      var data = msg && msg.data ? msg.data : msg;
+      if(data==='play') player.playVideo();
+      if(data==='pause') player.pauseVideo();
+    }
+    document.addEventListener('message',handle);
+    window.addEventListener('message',handle);
+  </script>
+</body>
+</html>`;
+}
 
 type FeedItem = {
     track: SpotifyTrack;
@@ -23,52 +93,65 @@ type FeedItem = {
 
 const VideoCard = React.memo(
     ({
-        item,
-        isActive,
-        isMuted,
-        onUnmute,
-        width,
-        height,
-    }: {
+         item,
+         isActive,
+         width,
+         height,
+     }: {
         item: FeedItem;
         isActive: boolean;
-        isMuted: boolean;
-        onUnmute: () => void;
         width: number;
         height: number;
     }) => {
         const albumArt = item.track.album.images[0]?.url;
         const artist = item.track.artists[0]?.name ?? "";
-        const showVideo = isActive && item.match != null;
+        const showVideo = item.match != null;
 
-        // Cover-fill: scale the 16:9 video to fill full screen height, crop sides
+        // Cover-fill: scale 16:9 video to fill full screen height, crop sides
         const playerH = height;
         const playerW = Math.ceil(height * (16 / 9));
         const offsetX = -Math.floor((playerW - width) / 2);
+
+        const webViewRef = useRef<WebView>(null);
+        const wasActive = useRef(false);
+
+        useEffect(() => {
+            if (!webViewRef.current || !item.match) return;
+            if (isActive && !wasActive.current) {
+                webViewRef.current.injectJavaScript("player&&player.playVideo();true;");
+            } else if (!isActive && wasActive.current) {
+                webViewRef.current.injectJavaScript("player&&player.pauseVideo();true;");
+            }
+            wasActive.current = isActive;
+        }, [isActive, item.match]);
 
         return (
             <View style={[styles.card, { width, height }]}>
                 {showVideo ? (
                     <View style={[styles.playerWrap, { width, height }]}>
-                        <View style={{ position: "absolute", left: offsetX, top: 0, width: playerW, height: playerH }}>
-                            <YoutubePlayer
-                                videoId={item.match!.videoId}
-                                width={playerW}
-                                height={playerH}
-                                play={isActive}
-                                mute={isMuted}
-                                forceAndroidAutoplay
-                                webViewProps={{
-                                    allowsInlineMediaPlayback: true,
-                                    mediaPlaybackRequiresUserAction: false,
-                                    scrollEnabled: false,
+                        <View
+                            style={{
+                                position: "absolute",
+                                left: offsetX,
+                                top: 0,
+                                width: playerW,
+                                height: playerH,
+                            }}
+                        >
+                            <WebView
+                                ref={webViewRef}
+                                // ---- FIX FOR 153: provide baseUrl + origin ----
+                                source={{
+                                    html: buildYouTubeHtml(item.match!.videoId, WEB_ORIGIN),
+                                    baseUrl: WEB_ORIGIN,
                                 }}
-                                initialPlayerParams={{
-                                    controls: false,
-                                    rel: false,
-                                    modestbranding: true,
-                                    playsinline: true,
-                                }}
+                                originWhitelist={["https://*", "http://*"]}
+                                style={{ width: playerW, height: playerH, backgroundColor: "#000" }}
+                                allowsInlineMediaPlayback
+                                mediaPlaybackRequiresUserAction={false}
+                                javaScriptEnabled
+                                scrollEnabled={false}
+                                allowsFullscreenVideo={false}
                             />
                         </View>
                     </View>
@@ -88,13 +171,6 @@ const VideoCard = React.memo(
                     </View>
                 )}
 
-                {/* Tap-to-unmute badge — shown while muted on the active playing card */}
-                {isActive && showVideo && isMuted && (
-                    <Pressable style={styles.muteBadge} onPress={onUnmute}>
-                        <Text style={styles.muteBadgeText}>🔇 Tap to unmute</Text>
-                    </Pressable>
-                )}
-
                 <View style={styles.trackInfo}>
                     <Image source={{ uri: albumArt }} style={styles.thumbnail} />
                     <View style={styles.trackText}>
@@ -112,14 +188,12 @@ const VideoCard = React.memo(
 );
 
 export default function DiscoverScreen() {
-    const { spotifyToken } = useAuth();
+    const { spotifyToken, refreshSpotifyToken, signOut } = useAuth();
     const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
     const [currentIndex, setCurrentIndex] = useState(0);
     const [initialLoading, setInitialLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
-    // Start muted so iOS allows autoplay; unmutes permanently after first user tap
-    const [isMuted, setIsMuted] = useState(true);
 
     const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 });
 
@@ -162,7 +236,13 @@ export default function DiscoverScreen() {
                     });
             });
         } catch (e: any) {
-            setError(e?.message ?? "Failed to load feed");
+            const msg: string = e?.message ?? "";
+            if (msg.toLowerCase().includes("expired") || msg.toLowerCase().includes("401")) {
+                const refreshed = await refreshSpotifyToken();
+                if (!refreshed) await signOut();
+                return;
+            }
+            setError(msg || "Failed to load feed");
             setInitialLoading(false);
         }
     }
@@ -175,8 +255,6 @@ export default function DiscoverScreen() {
         },
         []
     );
-
-    const handleUnmute = useCallback(() => setIsMuted(false), []);
 
     if (initialLoading) {
         return (
@@ -211,8 +289,6 @@ export default function DiscoverScreen() {
                         <VideoCard
                             item={item}
                             isActive={index === currentIndex}
-                            isMuted={isMuted}
-                            onUnmute={handleUnmute}
                             width={containerSize.width}
                             height={containerSize.height}
                         />
@@ -266,20 +342,6 @@ const styles = StyleSheet.create({
     loadingText: {
         color: "rgba(255,255,255,0.65)",
         fontSize: 14,
-    },
-    muteBadge: {
-        position: "absolute",
-        top: 16,
-        right: 16,
-        backgroundColor: "rgba(0,0,0,0.55)",
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-        borderRadius: 20,
-    },
-    muteBadgeText: {
-        color: "#fff",
-        fontSize: 13,
-        fontWeight: "600",
     },
     trackInfo: {
         position: "absolute",

@@ -10,6 +10,7 @@ type AuthContextType = {
   spotifyToken: string | null;
   loading: boolean;
   signOut: () => Promise<void>;
+  refreshSpotifyToken: () => Promise<boolean>;
 };
 
 const AuthContext = createContext<AuthContextType>({
@@ -17,6 +18,7 @@ const AuthContext = createContext<AuthContextType>({
   spotifyToken: null,
   loading: true,
   signOut: async () => {},
+  refreshSpotifyToken: async () => false,
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -59,13 +61,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
+  const refreshSpotifyToken = async (): Promise<boolean> => {
+    const { data, error } = await supabase.auth.refreshSession();
+    if (error || !data.session) return false;
+    if (data.session.provider_token) {
+      setSpotifyToken(data.session.provider_token);
+      await AsyncStorage.setItem(SPOTIFY_TOKEN_KEY, data.session.provider_token);
+      return true;
+    }
+    return false;
+  };
+
   const signOut = async () => {
     await AsyncStorage.removeItem(SPOTIFY_TOKEN_KEY);
     await supabase.auth.signOut();
   };
 
   return (
-    <AuthContext.Provider value={{ session, spotifyToken, loading, signOut }}>
+    <AuthContext.Provider value={{ session, spotifyToken, loading, signOut, refreshSpotifyToken }}>
       {children}
     </AuthContext.Provider>
   );
