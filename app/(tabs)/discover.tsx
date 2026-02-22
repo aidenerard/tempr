@@ -39,6 +39,7 @@ function buildYouTubeHtml(videoId: string, origin: string): string {
     document.head.appendChild(tag);
 
     var player;
+    var active=false;
 
     function onYouTubeIframeAPIReady(){
       player=new YT.Player('p',{
@@ -53,17 +54,16 @@ function buildYouTubeHtml(videoId: string, origin: string): string {
           rel:0,
           modestbranding:1,
           enablejsapi:1,
-          origin:'${origin}'
+          origin:'${origin}',
+          cc_load_policy:0
         },
         events:{
           onReady:function(e){
-            // IMPORTANT: do NOT force iframe.referrerPolicy here.
-            // That can contribute to missing referrer / error 153.
             try { e.target.playVideo(); } catch(err) {}
           },
           onStateChange:function(e){
-            // Keep your existing behavior; not required for 153.
-            if(e.data===1){
+            // Only unmute when RN has flagged this card as active
+            if(e.data===1 && active){
               try { player.unMute(); player.setVolume(100); } catch(err) {}
             }
           }
@@ -72,11 +72,15 @@ function buildYouTubeHtml(videoId: string, origin: string): string {
     }
 
     function handle(msg){
-      if(!player) return;
-      // RN Android uses document message, iOS uses window message
       var data = msg && msg.data ? msg.data : msg;
-      if(data==='play') player.playVideo();
-      if(data==='pause') player.pauseVideo();
+      if(data==='activate'){
+        active=true;
+        if(player){ try{ player.unMute(); player.setVolume(100); player.playVideo(); }catch(e){} }
+      }
+      if(data==='deactivate'){
+        active=false;
+        if(player){ try{ player.mute(); player.pauseVideo(); }catch(e){} }
+      }
     }
     document.addEventListener('message',handle);
     window.addEventListener('message',handle);
@@ -95,22 +99,25 @@ const VideoCard = React.memo(
     ({
          item,
          isActive,
+         isNear,
          width,
          height,
      }: {
         item: FeedItem;
         isActive: boolean;
+        isNear: boolean;
         width: number;
         height: number;
     }) => {
         const albumArt = item.track.album.images[0]?.url;
         const artist = item.track.artists[0]?.name ?? "";
-        const showVideo = item.match != null;
+        const showVideo = item.match != null && isNear;
 
-        // Cover-fill: scale 16:9 video to fill full screen height, crop sides
-        const playerH = height;
-        const playerW = Math.ceil(height * (16 / 9));
+        // 75% height, centered vertically — black bars top & bottom, sides still cropped
+        const playerH = Math.round(height * 0.75);
+        const playerW = Math.ceil(playerH * (16 / 9));
         const offsetX = -Math.floor((playerW - width) / 2);
+        const offsetY = Math.floor((height - playerH) / 2);
 
         const webViewRef = useRef<WebView>(null);
         const wasActive = useRef(false);
@@ -118,9 +125,9 @@ const VideoCard = React.memo(
         useEffect(() => {
             if (!webViewRef.current || !item.match) return;
             if (isActive && !wasActive.current) {
-                webViewRef.current.injectJavaScript("player&&player.playVideo();true;");
+                webViewRef.current.injectJavaScript("handle({data:'activate'});true;");
             } else if (!isActive && wasActive.current) {
-                webViewRef.current.injectJavaScript("player&&player.pauseVideo();true;");
+                webViewRef.current.injectJavaScript("handle({data:'deactivate'});true;");
             }
             wasActive.current = isActive;
         }, [isActive, item.match]);
@@ -133,7 +140,7 @@ const VideoCard = React.memo(
                             style={{
                                 position: "absolute",
                                 left: offsetX,
-                                top: 0,
+                                top: offsetY,
                                 width: playerW,
                                 height: playerH,
                             }}
@@ -289,6 +296,7 @@ export default function DiscoverScreen() {
                         <VideoCard
                             item={item}
                             isActive={index === currentIndex}
+                            isNear={Math.abs(index - currentIndex) <= 2}
                             width={containerSize.width}
                             height={containerSize.height}
                         />
