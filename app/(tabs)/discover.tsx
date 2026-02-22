@@ -226,7 +226,7 @@ export default function DiscoverScreen() {
             setInitialLoading(false);
 
             tracks.forEach((track, index) => {
-                findMusicVideo(track.id)
+                findMusicVideo(track)
                     .then((match) => {
                         setFeedItems((prev) => {
                             const next = [...prev];
