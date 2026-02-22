@@ -41,6 +41,7 @@ export default function LoginScreen() {
           const fragment = url.hash ? url.hash.substring(1) : "";
           const search = url.search ? url.search.substring(1) : "";
           const params = new URLSearchParams(fragment || search);
+          console.log("[Login] redirect params:", Object.fromEntries(params));
 
           const errorCode = params.get("error");
           const errorDesc = params.get("error_description");
@@ -52,9 +53,13 @@ export default function LoginScreen() {
           const accessToken = params.get("access_token");
           const refreshToken = params.get("refresh_token");
           const providerToken = params.get("provider_token");
+          const providerRefreshToken = params.get("provider_refresh_token");
 
           if (providerToken) {
             await AsyncStorage.setItem("tempr_spotify_token", providerToken);
+          }
+          if (providerRefreshToken) {
+            await AsyncStorage.setItem("tempr_spotify_refresh_token", providerRefreshToken);
           }
 
           if (accessToken && refreshToken) {

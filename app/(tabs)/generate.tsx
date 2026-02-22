@@ -7,7 +7,14 @@ import {
   generateReplacementSong,
 } from "@/lib/gemini";
 import { getSavedIds, saveQueue } from "@/lib/queueStorage";
-import { addToQueue, getLikedTracks, searchTracks, type SpotifyTrack } from "@/lib/spotify";
+import {
+  addToQueue,
+  getLikedTracks,
+  getTopArtists,
+  getTopTracks,
+  searchTracks,
+  type SpotifyTrack,
+} from "@/lib/spotify";
 import { FontAwesome } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect } from "expo-router";

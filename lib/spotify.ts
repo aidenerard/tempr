@@ -3,13 +3,16 @@ import type { AudioFeatureTargets } from "./gemini";
 const SPOTIFY_BASE = "https://api.spotify.com/v1";
 
 async function spotifyFetch(endpoint: string, token: string): Promise<any> {
-  const res = await fetch(`${SPOTIFY_BASE}${endpoint}`, {
+  const url = `${SPOTIFY_BASE}${endpoint}`;
+  const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
   });
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || `Spotify API error: ${res.status}`);
+    const msg = err.error?.message || `Spotify API error: ${res.status}`;
+    console.error(`[Spotify] ${res.status} on ${url} —`, msg);
+    throw new Error(msg);
   }
   return res.json();
 }
@@ -121,6 +124,40 @@ export async function getRecommendations(
     token,
   );
   return data.tracks ?? [];
+}
+
+export async function getArtistTopTracks(
+  token: string,
+  artistId: string,
+  market = "US",
+): Promise<SpotifyTrack[]> {
+  const data = await spotifyFetch(
+    `/artists/${artistId}/top-tracks?market=${market}`,
+    token,
+  );
+  return data.tracks ?? [];
+}
+
+export async function getTrendingTracks(
+  token: string,
+  limit = 10,
+): Promise<SpotifyTrack[]> {
+  const [short, medium, long] = await Promise.all([
+    getTopTracks(token, 50, "short_term"),
+    getTopTracks(token, 50, "medium_term"),
+    getTopTracks(token, 50, "long_term"),
+  ]);
+
+  const seen = new Set<string>();
+  const pool: SpotifyTrack[] = [];
+  for (const t of [...short, ...medium, ...long]) {
+    if (!seen.has(t.id)) {
+      seen.add(t.id);
+      pool.push(t);
+    }
+  }
+
+  return pool.sort(() => Math.random() - 0.5).slice(0, limit);
 }
 
 export async function addToQueue(
