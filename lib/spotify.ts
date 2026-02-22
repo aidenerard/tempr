@@ -123,6 +123,46 @@ export async function getRecommendations(
     return data.tracks ?? [];
 }
 
+export async function getArtistTopTracks(
+    token: string,
+    artistId: string,
+    market = "US",
+): Promise<SpotifyTrack[]> {
+    const data = await spotifyFetch(
+        `/artists/${artistId}/top-tracks?market=${market}`,
+        token,
+    );
+    return data.tracks ?? [];
+}
+
+// Well-known Spotify editorial playlists — public, no special permissions needed
+const TRENDING_PLAYLIST_IDS = [
+    "37i9dQZEVXbMDoHDwVN2tF", // Global Top 50
+    "37i9dQZF1DXcBWIGoYBM5M", // Today's Top Hits
+    "37i9dQZF1DX0kbJZpiYdZl", // Hot Hits USA
+    "37i9dQZF1DX4JAvHpjipBk", // New Music Friday
+    "37i9dQZEVXbLiRSasKsNU9", // Viral 50 Global
+];
+
+export async function getTrendingTracks(
+    token: string,
+    limit = 10,
+): Promise<SpotifyTrack[]> {
+    // Pick a random playlist and a random starting offset for variety each call
+    const playlistId = TRENDING_PLAYLIST_IDS[Math.floor(Math.random() * TRENDING_PLAYLIST_IDS.length)];
+    const offset = Math.floor(Math.random() * 40);
+
+    const fields = "items(track(id,name,artists,album,uri,preview_url,duration_ms))";
+    const data = await spotifyFetch(
+        `/playlists/${playlistId}/tracks?limit=${limit}&offset=${offset}&fields=${encodeURIComponent(fields)}`,
+        token,
+    );
+
+    return (data.items ?? [])
+        .map((item: any) => item.track)
+        .filter((t: any) => t?.id);
+}
+
 export async function addToQueue(
     token: string,
     trackUri: string,

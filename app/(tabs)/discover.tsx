@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { WebView } from "react-native-webview";
 import { useAuth } from "@/lib/AuthContext";
-import { getTopTracks, SpotifyTrack } from "@/lib/spotify";
+import { getTrendingTracks, SpotifyTrack } from "@/lib/spotify";
 import { findMusicVideo, YouTubeMatch } from "@/lib/youtube";
 import { theme } from "@/constants/Colors";
 
@@ -18,7 +18,7 @@ import { theme } from "@/constants/Colors";
 // This does NOT need to resolve. It just needs to be a consistent https origin string.
 const WEB_ORIGIN = __DEV__ ? "https://app.local" : "https://yourdomain.com";
 
-function buildYouTubeHtml(videoId: string, origin: string): string {
+function buildYouTubeHtml(videoId: string, origin: string, startSeconds: number): string {
     return `<!DOCTYPE html>
 <html>
 <head>
@@ -49,6 +49,7 @@ function buildYouTubeHtml(videoId: string, origin: string): string {
         playerVars:{
           autoplay:1,
           mute:1,
+          start:${startSeconds},
           playsinline:1,
           controls:0,
           rel:0,
@@ -149,7 +150,7 @@ const VideoCard = React.memo(
                                 ref={webViewRef}
                                 // ---- FIX FOR 153: provide baseUrl + origin ----
                                 source={{
-                                    html: buildYouTubeHtml(item.match!.videoId, WEB_ORIGIN),
+                                    html: buildYouTubeHtml(item.match!.videoId, WEB_ORIGIN, item.match!.startSeconds),
                                     baseUrl: WEB_ORIGIN,
                                 }}
                                 originWhitelist={["https://*", "http://*"]}
@@ -214,7 +215,8 @@ export default function DiscoverScreen() {
             setInitialLoading(true);
             setError(null);
 
-            const tracks = await getTopTracks(token, 8);
+            const tracks = await getTrendingTracks(token, 10);
+            console.log("[Discover] trending tracks:", tracks.map((t) => `${t.name} - ${t.artists[0]?.name}`));
 
             const items: FeedItem[] = tracks.map((track) => ({
                 track,
@@ -226,15 +228,17 @@ export default function DiscoverScreen() {
             setInitialLoading(false);
 
             tracks.forEach((track, index) => {
-                findMusicVideo(track)
+                findMusicVideo(track, token)
                     .then((match) => {
+                        console.log(`[Discover] video match for "${track.name}":`, match?.videoId ?? "none");
                         setFeedItems((prev) => {
                             const next = [...prev];
                             next[index] = { ...next[index], match, matchLoading: false };
                             return next;
                         });
                     })
-                    .catch(() => {
+                    .catch((err) => {
+                        console.warn(`[Discover] findMusicVideo failed for "${track.name}":`, err.message);
                         setFeedItems((prev) => {
                             const next = [...prev];
                             next[index] = { ...next[index], match: null, matchLoading: false };
@@ -244,6 +248,7 @@ export default function DiscoverScreen() {
             });
         } catch (e: any) {
             const msg: string = e?.message ?? "";
+            console.error("[Discover] loadFeed error:", msg);
             if (msg.toLowerCase().includes("expired") || msg.toLowerCase().includes("401")) {
                 const refreshed = await refreshSpotifyToken();
                 if (!refreshed) await signOut();
