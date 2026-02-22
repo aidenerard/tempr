@@ -1,8 +1,8 @@
-import React from "react";
-import { StyleSheet } from "react-native";
+import { theme } from "@/constants/Colors";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { Tabs } from "expo-router";
-import { theme } from "@/constants/Colors";
+import React from "react";
+import { StyleSheet } from "react-native";
 
 function TabIcon({
   name,
@@ -42,12 +42,19 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="blend"
+        options={{
+          title: "Blend",
+          tabBarIcon: ({ color }) => (
+            <TabIcon name="dot-circle-o" color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="library"
         options={{
           title: "Library",
-          tabBarIcon: ({ color }) => (
-            <TabIcon name="bookmark" color={color} />
-          ),
+          tabBarIcon: ({ color }) => <TabIcon name="bookmark" color={color} />,
         }}
       />
       <Tabs.Screen

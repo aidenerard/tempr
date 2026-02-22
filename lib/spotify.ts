@@ -2,19 +2,14 @@ import type { AudioFeatureTargets } from "./gemini";
 
 const SPOTIFY_BASE = "https://api.spotify.com/v1";
 
-async function spotifyFetch(
-  endpoint: string,
-  token: string,
-): Promise<any> {
+async function spotifyFetch(endpoint: string, token: string): Promise<any> {
   const res = await fetch(`${SPOTIFY_BASE}${endpoint}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(
-      err.error?.message || `Spotify API error: ${res.status}`,
-    );
+    throw new Error(err.error?.message || `Spotify API error: ${res.status}`);
   }
   return res.json();
 }
@@ -126,6 +121,24 @@ export async function getRecommendations(
     token,
   );
   return data.tracks ?? [];
+}
+
+export async function addToQueue(
+  token: string,
+  trackUri: string,
+): Promise<void> {
+  const res = await fetch(
+    `${SPOTIFY_BASE}/me/player/queue?uri=${encodeURIComponent(trackUri)}`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  );
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Failed to add to queue: ${res.status}`);
+  }
 }
 
 export function formatDuration(ms: number): string {

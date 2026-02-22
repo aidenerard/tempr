@@ -54,6 +54,103 @@ function extractJson(raw: string): string | null {
   return null;
 }
 
+export type MoodCoordinate = {
+  energy: number;
+  valence: number;
+};
+
+export async function generateBlendQueue(
+  coord: MoodCoordinate,
+  zoneName: string,
+  topTracks: SpotifyTrack[],
+  topArtists: SpotifyArtist[],
+): Promise<QueueSuggestion> {
+  const trackContext = (topTracks ?? [])
+    .slice(0, 15)
+    .map((t) => `"${t.name}" by ${t.artists?.[0]?.name ?? "Unknown"}`)
+    .join(", ");
+
+  const artistContext = (topArtists ?? [])
+    .slice(0, 10)
+    .map((a) => `${a.name} (${(a.genres ?? []).slice(0, 3).join(", ")})`)
+    .join(", ");
+
+  const danceability = (coord.energy * 0.6 + coord.valence * 0.4).toFixed(2);
+  const acousticness = Math.max(0, 1 - coord.energy * 1.2).toFixed(2);
+  const tempo = Math.round(70 + coord.energy * 90);
+
+  const systemPrompt = `You are a music curator AI for an app called Tempr. You are generating a queue based on precise emotional coordinates on a 2D mood space.
+
+The X-axis is VALENCE (0=sad/dark, 1=happy/euphoric).
+The Y-axis is ENERGY (0=calm/ambient, 1=intense/loud).
+
+The user has placed their finger at: Energy=${coord.energy.toFixed(2)}, Valence=${coord.valence.toFixed(2)}
+This maps to the "${zoneName}" emotional zone.
+
+RESPOND WITH ONLY A JSON OBJECT. No markdown, no code fences, no explanation.
+
+JSON schema:
+{
+  "audioFeatures": {
+    "energy": ${coord.energy.toFixed(2)},
+    "valence": ${coord.valence.toFixed(2)},
+    "danceability": ${danceability},
+    "acousticness": ${acousticness},
+    "tempo": ${tempo}
+  },
+  "familiar": ["song title - artist name", ...],
+  "discoveries": ["song title - artist name", ...],
+  "reasoning": "one sentence explaining why these songs match this emotional coordinate"
+}
+
+CRITICAL RULES:
+- "familiar": Pick 4-5 songs FROM the user's top tracks that match energy=${coord.energy.toFixed(2)} and valence=${coord.valence.toFixed(2)}. Use EXACT titles from their history.
+- "discoveries": Pick 6-8 songs the user has probably NEVER heard. Real songs on Spotify. Artists NOT in the user's top artists. Songs that perfectly match these exact energy/valence coordinates.
+- All songs must be REAL tracks available on Spotify.
+- Output ONLY the JSON object, nothing else.`;
+
+  const userMessage = `Mood coordinates: Energy=${coord.energy.toFixed(2)}, Valence=${coord.valence.toFixed(2)} (zone: "${zoneName}")
+
+User's top tracks: ${trackContext}
+User's top artists: ${artistContext}
+
+Generate a queue matching these exact emotional coordinates. Reply with ONLY the JSON object.`;
+
+  const maxAttempts = 2;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: userMessage,
+      config: {
+        systemInstruction: systemPrompt,
+        responseMimeType: "application/json",
+        maxOutputTokens: 4096,
+        thinkingConfig: { thinkingBudget: 0 },
+        temperature: 0.85,
+      },
+    });
+
+    const raw = (response.text ?? "").trim();
+    if (!raw) continue;
+
+    try {
+      return JSON.parse(raw) as QueueSuggestion;
+    } catch {
+      const jsonStr = extractJson(raw);
+      if (jsonStr) {
+        try {
+          const sanitized = jsonStr
+            .replace(/,\s*}/g, "}")
+            .replace(/,\s*]/g, "]");
+          return JSON.parse(sanitized) as QueueSuggestion;
+        } catch { /* retry */ }
+      }
+    }
+  }
+
+  throw new Error("Failed to generate blend queue");
+}
+
 export async function generateQueueSuggestions(
   prompt: string,
   topTracks: SpotifyTrack[],
