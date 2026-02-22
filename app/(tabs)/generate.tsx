@@ -447,6 +447,38 @@ export default function GenerateScreen() {
     }
   };
 
+  const handleAddAllToQueue = async (msg: Message) => {
+    if (!spotifyToken || !msg.songs) return;
+    const queuable = msg.songs
+      .map((s, i) => ({ song: s, index: i }))
+      .filter(({ song, index }) => song.uri && !queuedSongs[`${msg.id}-${index}`]);
+    if (queuable.length === 0) return;
+
+    const keys = queuable.map(({ index }) => `${msg.id}-${index}`);
+    setQueuedSongs((prev) => {
+      const next = { ...prev };
+      keys.forEach((k) => (next[k] = "queuing"));
+      return next;
+    });
+
+    for (const { song, index } of queuable) {
+      const key = `${msg.id}-${index}`;
+      try {
+        await addToQueue(spotifyToken, song.uri!);
+        setQueuedSongs((prev) => ({ ...prev, [key]: "queued" }));
+      } catch {
+        setQueuedSongs((prev) => ({ ...prev, [key]: "error" }));
+        setTimeout(() => {
+          setQueuedSongs((prev) => {
+            const next = { ...prev };
+            delete next[key];
+            return next;
+          });
+        }, 2000);
+      }
+    }
+  };
+
   const handleSave = async (msg: Message) => {
     if (!msg.songs || !msg.prompt || msg.saved) return;
     await saveQueue({
@@ -640,29 +672,78 @@ export default function GenerateScreen() {
                 </View>
               </View>
             </View>
-            <Pressable
-              style={({ pressed }) => [
-                styles.saveButton,
-                item.saved && styles.saveButtonSaved,
-                pressed && !item.saved && styles.saveButtonPressed,
-              ]}
-              onPress={() => handleSave(item)}
-              disabled={item.saved}
-            >
-              <FontAwesome
-                name={item.saved ? "check" : "bookmark-o"}
-                size={14}
-                color={item.saved ? theme.success : theme.primary}
-              />
-              <Text
-                style={[
-                  styles.saveButtonText,
-                  item.saved && styles.saveButtonTextSaved,
-                ]}
-              >
-                {item.saved ? "Saved to Library" : "Save to Library"}
-              </Text>
-            </Pressable>
+            {(() => {
+              const allKeys = item.songs!.map((_, i) => `${item.id}-${i}`);
+              const queuableCount = item.songs!.filter(
+                (s, i) => s.uri && !queuedSongs[allKeys[i]],
+              ).length;
+              const queuingCount = allKeys.filter(
+                (k) => queuedSongs[k] === "queuing",
+              ).length;
+              const allQueued =
+                queuableCount === 0 && queuingCount === 0 &&
+                item.songs!.some((s, i) => s.uri && queuedSongs[allKeys[i]] === "queued");
+
+              return (
+                <View style={styles.actionRow}>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.actionButton,
+                      allQueued && styles.actionButtonDone,
+                      pressed && !allQueued && queuingCount === 0 && styles.actionButtonPressed,
+                      queuableCount === 0 && queuingCount === 0 && !allQueued && styles.actionButtonDisabled,
+                    ]}
+                    onPress={() => handleAddAllToQueue(item)}
+                    disabled={queuableCount === 0 || queuingCount > 0}
+                  >
+                    {queuingCount > 0 ? (
+                      <ActivityIndicator size={14} color={theme.primary} />
+                    ) : (
+                      <FontAwesome
+                        name={allQueued ? "check" : "plus"}
+                        size={14}
+                        color={allQueued ? theme.success : theme.primary}
+                      />
+                    )}
+                    <Text
+                      style={[
+                        styles.actionButtonText,
+                        allQueued && styles.actionButtonTextDone,
+                      ]}
+                    >
+                      {allQueued
+                        ? "Added to Queue"
+                        : queuingCount > 0
+                          ? "Adding..."
+                          : "Add All to Queue"}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.actionButton,
+                      item.saved && styles.actionButtonDone,
+                      pressed && !item.saved && styles.actionButtonPressed,
+                    ]}
+                    onPress={() => handleSave(item)}
+                    disabled={item.saved}
+                  >
+                    <FontAwesome
+                      name={item.saved ? "check" : "bookmark-o"}
+                      size={14}
+                      color={item.saved ? theme.success : theme.primary}
+                    />
+                    <Text
+                      style={[
+                        styles.actionButtonText,
+                        item.saved && styles.actionButtonTextDone,
+                      ]}
+                    >
+                      {item.saved ? "Saved to Library" : "Save to Library"}
+                    </Text>
+                  </Pressable>
+                </View>
+              );
+            })()}
           </>
         )}
       </View>
@@ -1084,32 +1165,41 @@ const styles = StyleSheet.create({
   sendButtonDisabled: {
     opacity: 0.3,
   },
-  saveButton: {
+  actionRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 10,
+    backgroundColor: "transparent",
+  },
+  actionButton: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    marginTop: 10,
     paddingVertical: 12,
     borderRadius: 12,
     backgroundColor: theme.primaryMuted,
     borderWidth: 1,
     borderColor: theme.primaryBorder,
   },
-  saveButtonPressed: {
+  actionButtonPressed: {
     opacity: 0.7,
     transform: [{ scale: 0.98 }],
   },
-  saveButtonSaved: {
+  actionButtonDone: {
     backgroundColor: theme.successMuted,
     borderColor: "rgba(52, 199, 89, 0.25)",
   },
-  saveButtonText: {
+  actionButtonDisabled: {
+    opacity: 0.3,
+  },
+  actionButtonText: {
     fontSize: 14,
     fontWeight: "600",
     color: theme.primary,
   },
-  saveButtonTextSaved: {
+  actionButtonTextDone: {
     color: theme.success,
   },
   queueButton: {
